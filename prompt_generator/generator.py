@@ -1,4 +1,4 @@
-"""Assembles all analysis results into comprehensive AI music generation prompts."""
+"""Assembles all analysis results into comprehensive reproduction prompts."""
 
 from dataclasses import dataclass
 from prompt_generator.templates import SUNO_TEMPLATE, GENERIC_TEMPLATE, UDIO_TEMPLATE
@@ -14,7 +14,6 @@ class PromptResult:
 
 
 def _guess_genre(instruments: list[str], bpm: float, energy: str, feel: str, mood: str = "") -> str:
-    """Heuristic genre guess based on analysis results."""
     inst_lower = " ".join(instruments).lower()
     mood_lower = mood.lower()
 
@@ -38,7 +37,6 @@ def _guess_genre(instruments: list[str], bpm: float, energy: str, feel: str, moo
         return "Pop"
     if "strings" in inst_lower:
         return "Orchestral / Cinematic"
-
     if bpm > 140:
         return "Dance / Uptempo"
     if bpm < 76:
@@ -47,7 +45,6 @@ def _guess_genre(instruments: list[str], bpm: float, energy: str, feel: str, moo
 
 
 def _build_structured_lyrics(lyrics_text: str, sections: list, lyrics_segments: list = None) -> str:
-    """Combine lyrics with section labels and timestamps."""
     if not sections or not lyrics_text:
         return lyrics_text or ""
 
@@ -56,7 +53,6 @@ def _build_structured_lyrics(lyrics_text: str, sections: list, lyrics_segments: 
         result.append(f"[{section.label}] ({section.start_time:.1f}s - {section.end_time:.1f}s)")
 
         if lyrics_segments:
-            # Match lyrics segments to this section by time
             section_lyrics = []
             for seg in lyrics_segments:
                 seg_mid = (seg["start"] + seg["end"]) / 2
@@ -70,11 +66,9 @@ def _build_structured_lyrics(lyrics_text: str, sections: list, lyrics_segments: 
                 result.append("(instrumental)")
         result.append("")
 
-    # If time-aligned lyrics didn't work well, fall back to even distribution
     text_in_result = [l for l in result if l.strip() and not l.startswith("[") and l != "(instrumental)"]
     if not text_in_result and lyrics_text.strip():
-        lines = lyrics_text.strip().split("\n")
-        lines = [l.strip() for l in lines if l.strip()]
+        lines = [l.strip() for l in lyrics_text.strip().split("\n") if l.strip()]
         if lines and sections:
             result = []
             n_sections = len(sections)
@@ -92,10 +86,8 @@ def _build_structured_lyrics(lyrics_text: str, sections: list, lyrics_segments: 
 
 
 def _build_structure_detail(sections: list) -> str:
-    """Build detailed structure description."""
     if not sections:
         return "Unknown structure"
-
     from utils.audio_io import format_time
     lines = [" → ".join(s.label for s in sections), ""]
     for s in sections:
@@ -104,15 +96,23 @@ def _build_structure_detail(sections: list) -> str:
     return "\n".join(lines)
 
 
+def _format_chord_per_section(chord_per_section: dict) -> str:
+    if not chord_per_section:
+        return "  (not available)"
+    lines = []
+    for label, prog in chord_per_section.items():
+        lines.append(f"  {label}: {prog}")
+    return "\n".join(lines)
+
+
 def _format_dynamic_events(dynamic_events: list) -> str:
-    """Format dynamic events list."""
     if not dynamic_events:
         return "No significant dynamic changes"
     from utils.audio_io import format_time
     parts = []
     for e in dynamic_events[:10]:
-        parts.append(f"{format_time(e.start_time)}: {e.type} ({e.from_level} → {e.to_level})")
-    return "; ".join(parts)
+        parts.append(f"{format_time(e.time)}: {e.marking}")
+    return " → ".join(parts)
 
 
 def generate_prompt(
@@ -131,79 +131,54 @@ def generate_prompt(
     sections: list,
     source_lang: str,
     target_lang: str = None,
-    # New detailed parameters
+    # Emotion
     mood: str = "",
     mood_tags: list[str] = None,
     emotional_arc: str = "",
     energy_curve: str = "",
+    # Vocal style
     vocal_style_tags: list[str] = None,
     vibrato_desc: str = "",
     register_desc: str = "",
     tone_desc: str = "",
     articulation_desc: str = "",
+    # Dynamics
     dynamics_marking: str = "",
     dynamic_range: str = "",
     volume_map: str = "",
     dynamic_events: list = None,
     rhythm_description: str = "",
     lyrics_segments: list = None,
+    # Chords (NEW)
+    chord_progression: str = "",
+    chord_per_section: dict = None,
+    chord_description: str = "",
+    # Drums (NEW)
+    drum_pattern: str = "",
+    drum_groove: str = "",
+    drum_description: str = "",
+    drum_notation: str = "",
+    kick_pattern: str = "",
+    snare_pattern: str = "",
+    hihat_pattern: str = "",
 ) -> PromptResult:
-    """Generate comprehensive AI music prompts with all analysis details."""
+    """Generate comprehensive reproduction prompts with all analysis data."""
     genre = _guess_genre(instruments, bpm, energy, feel, mood)
     instruments_str = ", ".join(instruments)
     lang_name = LANGUAGE_OPTIONS.get(source_lang, source_lang)
     vocal_tags_str = ", ".join(vocal_style_tags) if vocal_style_tags else "natural"
     mood_tags_str = ", ".join(mood_tags) if mood_tags else mood
-    dynamic_events_str = _format_dynamic_events(dynamic_events) if dynamic_events else "gradual natural dynamics"
+    dynamic_events_str = _format_dynamic_events(dynamic_events) if dynamic_events else "gradual"
     structured_lyrics = _build_structured_lyrics(lyrics_text, sections, lyrics_segments)
     structure_detail = _build_structure_detail(sections)
+    chord_section_str = _format_chord_per_section(chord_per_section or {})
 
-    # --- Suno prompt ---
-    suno = SUNO_TEMPLATE.format(
+    # Common template kwargs
+    common = dict(
         genre=genre,
         bpm=f"{bpm:.0f}",
         key=key,
         time_signature=time_signature,
-        mood=mood,
-        feel=feel,
-        energy=energy,
-        instruments=instruments_str,
-        vocal_range=vocal_range,
-        language=lang_name,
-        vocal_style_tags=vocal_tags_str,
-        dynamics_marking=dynamics_marking or "mf",
-        structured_lyrics=structured_lyrics,
-    )
-
-    # --- Udio prompt ---
-    udio = UDIO_TEMPLATE.format(
-        genre=genre,
-        key=key,
-        bpm=f"{bpm:.0f}",
-        time_signature=time_signature,
-        feel=feel,
-        energy=energy,
-        mood=mood,
-        instruments=instruments_str,
-        vocal_range=vocal_range,
-        vocal_style_tags=vocal_tags_str,
-        vibrato=vibrato_desc or "natural vibrato",
-        tone=tone_desc or "balanced tone",
-        articulation=articulation_desc or "natural articulation",
-        dynamics_marking=dynamics_marking or "mf",
-        dynamic_range=dynamic_range or "moderate",
-        melody_description=melody_description,
-        emotional_arc=emotional_arc,
-        language=lang_name,
-        structured_lyrics=structured_lyrics,
-    )
-
-    # --- Generic (full detail) prompt ---
-    generic = GENERIC_TEMPLATE.format(
-        bpm=f"{bpm:.0f}",
-        key=key,
-        time_signature=time_signature,
-        genre=genre,
         mood=mood,
         mood_tags=mood_tags_str,
         emotional_arc=emotional_arc or "consistent throughout",
@@ -211,10 +186,8 @@ def generate_prompt(
         feel=feel,
         energy=energy,
         rhythm_description=rhythm_description or feel,
+        instruments=instruments_str,
         vocal_range=vocal_range,
-        melody_description=melody_description,
-        melody_contour=melody_contour or "",
-        melody_notation=melody_notation or "",
         vocal_style_tags=vocal_tags_str,
         vibrato=vibrato_desc or "natural",
         register=register_desc or "",
@@ -223,12 +196,45 @@ def generate_prompt(
         dynamics_marking=dynamics_marking or "mf",
         dynamic_range=dynamic_range or "moderate",
         volume_map=volume_map or "",
-        dynamic_events=dynamic_events_str,
-        instruments=instruments_str,
+        melody_description=melody_description,
+        melody_contour=melody_contour or "",
+        melody_notation=melody_notation or "",
         structure_detail=structure_detail,
+        chord_progression=chord_progression or "not detected",
+        chord_per_section=chord_section_str,
+        drum_groove=drum_groove or "standard",
+        drum_notation=drum_notation or "",
+        kick_pattern=kick_pattern or "",
+        snare_pattern=snare_pattern or "",
+        hihat_pattern=hihat_pattern or "",
+    )
+
+    # --- Suno prompt ---
+    suno = SUNO_TEMPLATE.format(
+        **common,
         language=lang_name,
         structured_lyrics=structured_lyrics,
-        notes=f"Genre: {genre}. Reproduce faithfully with exact BPM, key, structure, and vocal style.",
+    )
+
+    # --- Udio prompt ---
+    udio = UDIO_TEMPLATE.format(
+        **common,
+        language=lang_name,
+        structured_lyrics=structured_lyrics,
+    )
+
+    # --- Generic (full detail) prompt ---
+    generic = GENERIC_TEMPLATE.format(
+        **common,
+        language=lang_name,
+        structured_lyrics=structured_lyrics,
+        notes=(
+            f"Genre: {genre}. "
+            f"Reproduce faithfully: exact BPM ({bpm:.0f}), key ({key}), "
+            f"chord progression ({chord_progression or 'auto'}), "
+            f"drum pattern ({drum_groove or 'standard'}), "
+            f"vocal style ({vocal_tags_str}), dynamics ({dynamics_marking or 'mf'})."
+        ),
     )
 
     # --- Translated version ---
@@ -237,40 +243,17 @@ def generate_prompt(
         target_lang_name = LANGUAGE_OPTIONS.get(target_lang, target_lang)
         translated_structured = _build_structured_lyrics(translated_text, sections)
         translated_prompt = GENERIC_TEMPLATE.format(
-            bpm=f"{bpm:.0f}",
-            key=key,
-            time_signature=time_signature,
-            genre=genre,
-            mood=mood,
-            mood_tags=mood_tags_str,
-            emotional_arc=emotional_arc or "consistent throughout",
-            energy_curve=energy_curve or "steady",
-            feel=feel,
-            energy=energy,
-            rhythm_description=rhythm_description or feel,
-            vocal_range=vocal_range,
-            melody_description=melody_description,
-            melody_contour=melody_contour or "",
-            melody_notation=melody_notation or "",
-            vocal_style_tags=vocal_tags_str,
-            vibrato=vibrato_desc or "natural",
-            register=register_desc or "",
-            tone=tone_desc or "",
-            articulation=articulation_desc or "",
-            dynamics_marking=dynamics_marking or "mf",
-            dynamic_range=dynamic_range or "moderate",
-            volume_map=volume_map or "",
-            dynamic_events=dynamic_events_str,
-            instruments=instruments_str,
-            structure_detail=structure_detail,
+            **common,
             language=target_lang_name,
             structured_lyrics=translated_structured,
             notes=(
                 f"Genre: {genre}. "
                 f"This is a {target_lang_name} cover of the original {lang_name} song. "
-                f"KEEP THE EXACT SAME: melody, BPM ({bpm:.0f}), key ({key}), "
-                f"vocal style ({vocal_tags_str}), dynamics ({dynamics_marking}), "
-                f"and emotional arc. Only the lyrics language changes."
+                f"KEEP EXACTLY THE SAME: BPM ({bpm:.0f}), key ({key}), "
+                f"chord progression ({chord_progression or 'auto'}), "
+                f"drum pattern ({drum_groove or 'standard'}), "
+                f"melody, vocal style ({vocal_tags_str}), dynamics ({dynamics_marking or 'mf'}), "
+                f"and emotional arc. ONLY change the lyrics language to {target_lang_name}."
             ),
         )
 

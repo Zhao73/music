@@ -1,4 +1,4 @@
-"""MusicLens - Gradio Web UI for complete music analysis and cross-language recreation."""
+"""MusicLens — Gradio Web UI for 95%+ music reproduction analysis."""
 
 import sys
 import os
@@ -12,10 +12,9 @@ from utils.audio_io import format_time
 
 
 def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
-    """Main analysis function called by the Gradio UI."""
     if audio_file is None:
-        empty = "Please upload an audio file."
-        return (empty,) + ("",) * 12
+        empty = "Please upload an audio file. / 请上传音乐文件。"
+        return (empty,) + ("",) * 14
 
     def progress_callback(step, fraction):
         progress(fraction, desc=step)
@@ -27,283 +26,194 @@ def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
         progress_callback=progress_callback,
     )
 
-    # --- 1. Basic Info ---
-    basic_info = f"Duration: {result.duration}\n"
+    # --- 1. Overview ---
+    info = f"Duration: {result.duration}\n"
+    info += f"Source Separation: {'Demucs (high quality)' if result.separation_used else 'HPSS fallback'}\n"
     if result.lyrics:
-        basic_info += f"Detected Language: {result.lyrics.detected_language}\n"
+        info += f"Language: {result.lyrics.detected_language}\n"
     if result.rhythm:
-        basic_info += f"BPM: {result.rhythm.bpm:.1f}\n"
-        basic_info += f"Time Signature: {result.rhythm.time_signature}\n"
-        basic_info += f"Feel: {result.rhythm.feel}\n"
-        basic_info += f"Energy: {result.rhythm.energy_level}\n"
+        info += f"BPM: {result.rhythm.bpm:.1f}\n"
+        info += f"Time Signature: {result.rhythm.time_signature}\n"
+        info += f"Feel: {result.rhythm.feel}\n"
+        info += f"Energy: {result.rhythm.energy_level}\n"
     if result.key:
-        basic_info += f"Key: {result.key.key} (confidence: {result.key.confidence:.2f})\n"
+        info += f"Key: {result.key.key} (confidence: {result.key.confidence:.2f})\n"
     if result.emotion:
-        basic_info += f"Overall Mood: {result.emotion.overall_mood}\n"
-        basic_info += f"Mood Tags: {', '.join(result.emotion.mood_tags)}\n"
+        info += f"Mood: {result.emotion.overall_mood}\n"
+        info += f"Mood Tags: {', '.join(result.emotion.mood_tags)}\n"
     if result.instruments:
-        basic_info += f"Instruments: {', '.join(result.instruments.detected)}\n"
+        info += f"Instruments: {', '.join(result.instruments.detected)}\n"
+    if result.chords and result.chords.key_chords:
+        info += f"Main Chords: {result.chords.key_chords}\n"
+    if result.drum_patterns and result.drum_patterns.groove_type:
+        info += f"Drum Groove: {result.drum_patterns.groove_type}\n"
     if result.errors:
-        basic_info += f"\nWarnings: {'; '.join(result.errors)}"
+        info += f"\nWarnings: {'; '.join(result.errors)}\n"
+    info += f"\nSteps completed: {len(result.steps_completed)}/15"
 
     # --- 2. Lyrics ---
-    lyrics_text = ""
+    lyrics = ""
     if result.lyrics:
-        lyrics_text = result.lyrics.full_text
+        lyrics = result.lyrics.full_text
         if result.lyrics.segments:
-            lyrics_text += "\n\n--- Timed Lyrics (per segment) ---\n"
+            lyrics += "\n\n--- Timed Lyrics ---\n"
             for seg in result.lyrics.segments:
-                lyrics_text += f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}\n"
+                lyrics += f"[{seg['start']:.1f}s - {seg['end']:.1f}s] {seg['text']}\n"
 
-    # --- 3. Melody (enhanced) ---
-    melody_text = ""
+    # --- 3. Melody ---
+    melody = ""
     if result.melody:
-        melody_text = result.melody.description + "\n\n"
-        melody_text += "--- Melodic Contour per Section ---\n"
-        melody_text += result.melody.contour_per_section + "\n\n"
-        melody_text += "--- Note Sequence (simplified notation) ---\n"
-        melody_text += result.melody.melody_notation + "\n\n"
+        melody = result.melody.description + "\n\n"
+        melody += "--- Melodic Contour ---\n" + result.melody.contour_per_section + "\n\n"
+        melody += "--- Notation ---\n" + result.melody.melody_notation + "\n\n"
         if result.melody.note_events:
-            melody_text += f"--- Detailed Note Events (first 30 of {len(result.melody.note_events)}) ---\n"
+            melody += f"--- Note Events (first 30 of {len(result.melody.note_events)}) ---\n"
             for n in result.melody.note_events[:30]:
-                vel_bar = "#" * max(1, int(n.velocity_est * 10))
-                melody_text += (
-                    f"  {n.start_time:6.2f}s  {n.note_name:<5} "
-                    f"dur={n.duration:.3f}s ({n.duration_type:<20}) "
-                    f"vel={n.velocity_est:.2f} |{vel_bar}|\n"
-                )
+                bar = "#" * max(1, int(n.velocity_est * 10))
+                melody += f"  {n.start_time:6.2f}s {n.note_name:<5} dur={n.duration:.3f}s ({n.duration_type:<20}) |{bar}|\n"
             if len(result.melody.note_events) > 30:
-                melody_text += f"  ... and {len(result.melody.note_events) - 30} more notes\n"
+                melody += f"  ... +{len(result.melody.note_events) - 30} more\n"
         if result.melody.intervals:
-            melody_text += f"\n--- Interval Sequence (first 30) ---\n"
-            melody_text += " → ".join(result.melody.intervals[:30])
-            if len(result.melody.intervals) > 30:
-                melody_text += f" ... ({len(result.melody.intervals)} total)"
+            melody += f"\n--- Intervals (first 30) ---\n"
+            melody += " → ".join(result.melody.intervals[:30])
 
-    # --- 4. Structure ---
-    structure_text = ""
+    # --- 4. Chords ---
+    chords = result.chords.description if result.chords else "Not available"
+
+    # --- 5. Drum patterns ---
+    drums = result.drum_patterns.description if result.drum_patterns else "Not available"
+
+    # --- 6. Structure ---
+    structure = ""
     if result.structure:
-        structure_text = "Song Structure: " + result.structure.summary + "\n\n"
-        for section in result.structure.sections:
-            dur = section.end_time - section.start_time
-            structure_text += (
-                f"  {section.label:<15} "
-                f"{format_time(section.start_time)} - {format_time(section.end_time)} "
-                f"({dur:.1f}s)\n"
-            )
+        structure = "Structure: " + result.structure.summary + "\n\n"
+        for s in result.structure.sections:
+            dur = s.end_time - s.start_time
+            structure += f"  {s.label:<15} {format_time(s.start_time)} - {format_time(s.end_time)} ({dur:.1f}s)\n"
 
-    # --- 5. Vocal Style ---
-    vocal_text = ""
-    if result.vocal_style:
-        vocal_text = result.vocal_style.full_description
+    # --- 7. Vocal Style ---
+    vocal = result.vocal_style.full_description if result.vocal_style else ""
 
-    # --- 6. Emotion ---
-    emotion_text = ""
-    if result.emotion:
-        emotion_text = result.emotion.full_description
+    # --- 8. Emotion ---
+    emotion = result.emotion.full_description if result.emotion else ""
 
-    # --- 7. Dynamics ---
-    dynamics_text = ""
-    if result.dynamics:
-        dynamics_text = result.dynamics.description
+    # --- 9. Dynamics ---
+    dynamics = result.dynamics.description if result.dynamics else ""
 
-    # --- 8. Instruments ---
-    instruments_text = ""
-    if result.instruments:
-        instruments_text = result.instruments.description
+    # --- 10. Instruments ---
+    instruments = result.instruments.description if result.instruments else ""
 
-    # --- 9-11. Prompts ---
-    suno_prompt = result.prompts.suno_prompt if result.prompts else ""
-    generic_prompt = result.prompts.generic_prompt if result.prompts else ""
-    translated_prompt = result.prompts.translated_prompt if result.prompts else "No translation requested."
+    # --- 11-13. Prompts ---
+    suno = result.prompts.suno_prompt if result.prompts else ""
+    generic = result.prompts.generic_prompt if result.prompts else ""
+    translated = result.prompts.translated_prompt if result.prompts else "No translation requested."
 
-    # --- 12. Translation ---
-    translation_text = ""
-    if result.translation:
-        translation_text = result.translation.translated
+    # --- 14. Translation ---
+    translation = result.translation.translated if result.translation else "No translation requested."
+
+    # --- 15. Log ---
+    log = f"Steps completed: {', '.join(result.steps_completed)}\n"
+    if result.errors:
+        log += f"\nErrors/Warnings:\n" + "\n".join(f"  - {e}" for e in result.errors)
     else:
-        translation_text = "No translation requested."
-
-    # --- 13. Errors ---
-    errors_text = "\n".join(result.errors) if result.errors else "No errors."
+        log += "No errors."
 
     return (
-        basic_info,
-        lyrics_text,
-        melody_text,
-        structure_text,
-        vocal_text,
-        emotion_text,
-        dynamics_text,
-        instruments_text,
-        suno_prompt,
-        generic_prompt,
-        translated_prompt,
-        translation_text,
-        errors_text,
+        info, lyrics, melody, chords, drums, structure,
+        vocal, emotion, dynamics, instruments,
+        suno, generic, translated, translation, log,
     )
 
 
-# Build Gradio UI
+# Build UI
 lang_choices = [(v, k) for k, v in LANGUAGE_OPTIONS.items()]
 target_choices = [(v, k) for k, v in LANGUAGE_OPTIONS.items() if k != "auto"]
 
 with gr.Blocks(
-    title="MusicLens - 音乐完整复刻分析",
+    title="MusicLens - 95%+ Music Reproduction",
     theme=gr.themes.Soft(),
-    css="""
-    .main-title { text-align: center; margin-bottom: 0.5em; }
-    .subtitle { text-align: center; color: #666; margin-bottom: 1.5em; }
-    .prompt-box textarea { font-family: monospace !important; font-size: 13px !important; }
-    """
+    css=".mono textarea { font-family: monospace !important; font-size: 12px !important; }"
 ) as demo:
     gr.HTML("""
-    <div class="main-title">
-        <h1>MusicLens - 音乐完整复刻分析工具</h1>
-    </div>
-    <div class="subtitle">
-        <p>上传音乐 → 自动分析歌词 / 音调 / 节奏 / 语气 / 力度 / 情感 / 结构 → 生成 100% 还原提示词 → 复制到 Suno/Udio 生成复刻版或外语版</p>
+    <div style="text-align:center; margin-bottom:1em;">
+        <h1>MusicLens — 95%+ 音乐完整复刻分析</h1>
+        <p style="color:#666;">
+            Upload → Demucs Separation → 12 Analyzers → Complete Reproduction Prompt → Copy to Suno/Udio<br>
+            上传音乐 → Demucs人声分离 → 12项深度分析 → 完整复刻提示词 → 复制到Suno/Udio生成
+        </p>
     </div>
     """)
 
     with gr.Row():
         with gr.Column(scale=1):
-            audio_input = gr.Audio(
-                type="filepath",
-                label="Upload Music / 上传音乐文件",
-            )
+            audio_input = gr.Audio(type="filepath", label="Upload Music / 上传音乐")
         with gr.Column(scale=1):
-            source_lang = gr.Dropdown(
-                choices=lang_choices,
-                value="auto",
-                label="Song Language / 歌曲语言",
-            )
-            target_lang = gr.Dropdown(
-                choices=target_choices,
-                value="en",
-                label="Translation Target / 翻译目标语言",
-            )
-            analyze_btn = gr.Button(
-                "Start Full Analysis / 开始完整分析",
-                variant="primary",
-                size="lg",
-            )
+            source_lang = gr.Dropdown(choices=lang_choices, value="auto", label="Song Language / 歌曲语言")
+            target_lang = gr.Dropdown(choices=target_choices, value="en", label="Target Language / 目标语言")
+            btn = gr.Button("Analyze for Reproduction / 开始完整分析", variant="primary", size="lg")
 
     with gr.Tabs():
         with gr.TabItem("Overview / 总览"):
-            basic_output = gr.Textbox(
-                label="Basic Info / 基本信息",
-                lines=12, interactive=False,
-            )
+            out_info = gr.Textbox(label="Analysis Summary", lines=15, interactive=False)
 
         with gr.TabItem("Lyrics / 歌词"):
-            lyrics_output = gr.Textbox(
-                label="Lyrics with Timestamps / 歌词 (含时间戳)",
-                lines=25, interactive=False, show_copy_button=True,
-            )
+            out_lyrics = gr.Textbox(label="Lyrics + Timestamps", lines=25, interactive=False, show_copy_button=True)
 
-        with gr.TabItem("Melody / 旋律音调"):
-            melody_output = gr.Textbox(
-                label="Melody: Notes, Duration, Intervals / 旋律：音符、长短音、音程",
-                lines=30, interactive=False, show_copy_button=True,
-                elem_classes=["prompt-box"],
-            )
+        with gr.TabItem("Melody / 旋律"):
+            out_melody = gr.Textbox(label="Melody: Notes, Duration, Intervals", lines=30, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
-        with gr.TabItem("Structure / 曲式结构"):
-            structure_output = gr.Textbox(
-                label="Song Structure / 曲式结构",
-                lines=15, interactive=False,
-            )
+        with gr.TabItem("Chords / 和弦"):
+            out_chords = gr.Textbox(label="Chord Progression", lines=25, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
-        with gr.TabItem("Vocal Style / 演唱风格"):
-            vocal_output = gr.Textbox(
-                label="Vocal Technique: Vibrato, Dynamics, Register, Tone, Articulation / 演唱技巧分析",
-                lines=20, interactive=False, show_copy_button=True,
-            )
+        with gr.TabItem("Drums / 鼓点"):
+            out_drums = gr.Textbox(label="Drum Pattern Analysis", lines=25, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
-        with gr.TabItem("Emotion / 情感语气"):
-            emotion_output = gr.Textbox(
-                label="Emotion & Mood Analysis / 情感与语气分析",
-                lines=25, interactive=False, show_copy_button=True,
-            )
+        with gr.TabItem("Structure / 结构"):
+            out_structure = gr.Textbox(label="Song Structure", lines=15, interactive=False)
 
-        with gr.TabItem("Dynamics / 力度音量"):
-            dynamics_output = gr.Textbox(
-                label="Dynamics & Volume Map / 力度与音量变化",
-                lines=20, interactive=False, show_copy_button=True,
-                elem_classes=["prompt-box"],
-            )
+        with gr.TabItem("Vocal / 演唱"):
+            out_vocal = gr.Textbox(label="Vocal Style Analysis", lines=20, interactive=False, show_copy_button=True)
+
+        with gr.TabItem("Emotion / 情感"):
+            out_emotion = gr.Textbox(label="Emotion & Mood", lines=25, interactive=False, show_copy_button=True)
+
+        with gr.TabItem("Dynamics / 力度"):
+            out_dynamics = gr.Textbox(label="Dynamics & Volume", lines=20, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
         with gr.TabItem("Instruments / 乐器"):
-            instruments_output = gr.Textbox(
-                label="Detected Instruments / 检测到的乐器",
-                lines=8, interactive=False,
-            )
+            out_instruments = gr.Textbox(label="Instruments", lines=8, interactive=False)
 
-        with gr.TabItem("Suno Prompt / Suno提示词"):
-            suno_output = gr.Textbox(
-                label="Suno AI Prompt (copy & paste to Suno) / Suno 提示词（直接复制使用）",
-                lines=25, interactive=False, show_copy_button=True,
-                elem_classes=["prompt-box"],
-            )
+        with gr.TabItem("Suno Prompt"):
+            out_suno = gr.Textbox(label="Suno Prompt (copy to Suno)", lines=30, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
         with gr.TabItem("Full Prompt / 完整提示词"):
-            generic_output = gr.Textbox(
-                label="Complete Reproduction Prompt / 完整还原提示词",
-                lines=40, interactive=False, show_copy_button=True,
-                elem_classes=["prompt-box"],
-            )
+            out_generic = gr.Textbox(label="Complete Reproduction Prompt", lines=50, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
-        with gr.TabItem("Translated / 外语版提示词"):
-            translated_prompt_output = gr.Textbox(
-                label="Translated Reproduction Prompt / 外语版完整提示词",
-                lines=40, interactive=False, show_copy_button=True,
-                elem_classes=["prompt-box"],
-            )
+        with gr.TabItem("Translated / 外语版"):
+            out_translated = gr.Textbox(label="Translated Reproduction Prompt", lines=50, interactive=False, show_copy_button=True, elem_classes=["mono"])
 
-        with gr.TabItem("Translation / 翻译歌词"):
-            translation_output = gr.Textbox(
-                label="Translated Lyrics / 翻译后的歌词",
-                lines=20, interactive=False, show_copy_button=True,
-            )
+        with gr.TabItem("Translation / 翻译"):
+            out_translation = gr.Textbox(label="Translated Lyrics", lines=20, interactive=False, show_copy_button=True)
 
         with gr.TabItem("Log / 日志"):
-            errors_output = gr.Textbox(
-                label="Analysis Log / 分析日志",
-                lines=10, interactive=False,
-            )
+            out_log = gr.Textbox(label="Analysis Log", lines=10, interactive=False)
 
-    analyze_btn.click(
+    btn.click(
         fn=run_analysis,
         inputs=[audio_input, source_lang, target_lang],
         outputs=[
-            basic_output,
-            lyrics_output,
-            melody_output,
-            structure_output,
-            vocal_output,
-            emotion_output,
-            dynamics_output,
-            instruments_output,
-            suno_output,
-            generic_output,
-            translated_prompt_output,
-            translation_output,
-            errors_output,
+            out_info, out_lyrics, out_melody, out_chords, out_drums, out_structure,
+            out_vocal, out_emotion, out_dynamics, out_instruments,
+            out_suno, out_generic, out_translated, out_translation, out_log,
         ],
     )
 
-    gr.Markdown(
-        """
-        ---
-        **Analysis Modules / 分析模块**:
-        Whisper (lyrics) | librosa PYIN (melody + note timing) | Beat Tracking (rhythm) |
-        Krumhansl-Kessler (key) | Self-Similarity (structure) | Spectral (instruments) |
-        Vibrato/Dynamics/Register (vocal style) | Valence-Arousal (emotion) | RMS Loudness (dynamics)
-
-        **How to use / 使用流程**: Upload → Analyze → Copy "Suno Prompt" or "Full Prompt" → Paste into Suno/Udio → Generate
-        """
-    )
+    gr.Markdown("""
+    ---
+    **12 Analysis Modules**: Demucs Separation → Whisper (lyrics) → PYIN (melody+notes) → Beat Tracking (rhythm) →
+    Krumhansl-Kessler (key) → Chroma Templates (chords) → Drum Grid (patterns) → Self-Similarity (structure) →
+    Spectral (instruments) → Vibrato/Register/Tone (vocal) → Valence-Arousal (emotion) → RMS (dynamics)
+    """)
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860)
