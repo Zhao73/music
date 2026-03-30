@@ -105,6 +105,8 @@ def analyze(
     source_language: str = None,
     target_language: str = None,
     progress_callback=None,
+    translation_mode: str = "simple",
+    llm_api_key: str = "",
 ) -> AnalysisResult:
     """Run the FULL analysis pipeline for 95%+ reproduction fidelity.
 
@@ -322,18 +324,36 @@ def analyze(
         result.errors.append(f"Dynamics analysis failed: {e}")
 
     # ============================================================
-    # Step 14: Translate if requested
+    # Step 14: Translate if requested (Simple or Intelligent mode)
     # ============================================================
     translated_text = ""
     if target_language and result.lyrics and result.lyrics.full_text:
-        update_progress(f"Translating lyrics to {target_language}...", 14)
+        update_progress(f"Translating lyrics to {target_language} ({translation_mode})...", 14)
         try:
             src_lang = result.lyrics.detected_language or source_language or "auto"
+
+            # Build musical context for intelligent translation
+            musical_context = None
+            if translation_mode == "intelligent" and llm_api_key:
+                from translation.llm_translator import MusicalContext
+                musical_context = MusicalContext(
+                    bpm=result.rhythm.bpm if result.rhythm else 120.0,
+                    key=result.key.key if result.key else "",
+                    mood=result.emotion.overall_mood if result.emotion else "",
+                    emotional_arc=result.emotion.emotional_arc if result.emotion else "",
+                    vocal_style=", ".join(result.vocal_style.style_tags) if result.vocal_style else "",
+                    melody_contour=result.melody.contour_per_section if result.melody else "",
+                    sections=result.structure.sections if result.structure else None,
+                )
+
             result.translation = translate_lyrics(
-                result.lyrics.full_text, src_lang, target_language
+                result.lyrics.full_text, src_lang, target_language,
+                mode=translation_mode,
+                api_key=llm_api_key,
+                musical_context=musical_context,
             )
             translated_text = result.translation.translated
-            result.steps_completed.append("lyrics_translated")
+            result.steps_completed.append(f"lyrics_translated_{result.translation.mode}")
         except Exception as e:
             result.errors.append(f"Translation failed: {e}")
 

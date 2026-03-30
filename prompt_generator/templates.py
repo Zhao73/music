@@ -3,13 +3,27 @@
 # ============================================================
 # SUNO — Custom Mode has TWO separate input fields:
 #   1. "歌詞" (Lyrics) — paste lyrics here
-#   2. "スタイル" (Style) — paste style description here
+#   2. "スタイル / Style" — paste style description here
 # Our output must be split into two copyable sections.
 # ============================================================
 
 # Goes into Suno's "スタイル / Style" text box
+# Multi-line structured format for maximum reproduction fidelity
 SUNO_STYLE_TEMPLATE = """\
-{genre}, {key}, {bpm} BPM, {time_signature}, {feel}, {energy}, {mood}, {instruments}, vocal {vocal_range}, {vocal_style_tags}, {dynamics_marking}, chords: {chord_progression}, {drum_groove}, {language}\
+{genre}, {key}, {bpm} BPM, {time_signature}
+{feel}, {energy}, {mood}
+Instruments: {instruments}
+Vocal: {vocal_range}, {vocal_style_tags}
+Vocal Technique: {vibrato}, {register}, {tone}, {articulation}
+Dynamics: {dynamics_marking}, {dynamic_range} dynamic range
+Chord Progression: {chord_progression}
+Chords by Section:
+{chord_per_section}
+Drum Pattern: {drum_groove}
+Drum Grid: Kick={kick_pattern} | Snare={snare_pattern} | HiHat={hihat_pattern}
+Melody: {melody_description}
+Emotional Arc: {emotional_arc}
+Language: {language}\
 """
 
 # Goes into Suno's "歌詞 / Lyrics" text box
@@ -89,14 +103,53 @@ UDIO_TEMPLATE = """\
 {genre} song in {key}, {bpm} BPM, {time_signature} time.
 {feel}, {energy}. Mood: {mood}.
 Chords: {chord_progression}
+Chords by Section:
+{chord_per_section}
 Instruments: {instruments}.
 Vocal: {vocal_range}, {vocal_style_tags}.
 {vibrato}. {tone}. {articulation}.
 Dynamics: {dynamics_marking}, {dynamic_range} dynamic range.
-Drums: {drum_groove}. Pattern: {drum_notation}
-{melody_description}
-{emotional_arc}
+Drums: {drum_groove}. Kick={kick_pattern} | Snare={snare_pattern} | HiHat={hihat_pattern}
+Melody: {melody_description}
+Emotional Arc: {emotional_arc}
 
 Lyrics ({language}):
 {structured_lyrics}
+"""
+
+# ============================================================
+# Lyria prompt — natural language, optimized for Google Lyria 3
+# Lyria works best with detailed natural-language descriptions
+# ============================================================
+LYRIA_PROMPT_TEMPLATE = """\
+Create a {genre} song in {key} at exactly {bpm} BPM with {time_signature} time signature.
+
+Musical Foundation:
+- Chord progression: {chord_progression}
+- Per section chords: {chord_per_section}
+- Drum pattern: {drum_groove} groove with kick on {kick_description}, snare on {snare_description}
+- Bass follows the chord roots
+
+Instrumentation: {instruments}
+
+Vocal Performance:
+- Range: {vocal_range}
+- Style: {vocal_style_tags}
+- Technique: {vibrato}, {register} voice, {tone} tone, {articulation}
+
+Dynamics & Emotion:
+- Overall feel: {feel}, {energy}
+- Mood: {mood}
+- Dynamic marking: {dynamics_marking} with {dynamic_range} dynamic range
+- Emotional arc: {emotional_arc}
+
+Melody Character: {melody_description}
+
+Song Structure:
+{structure_detail}
+
+Lyrics ({language}):
+{structured_lyrics}
+
+CRITICAL: Maintain exactly {bpm} BPM and {key} throughout. The chord progression {chord_progression} must be clearly audible. Match the {mood} emotional tone precisely.\
 """
