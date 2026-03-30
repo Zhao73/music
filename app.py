@@ -6,16 +6,29 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import gradio as gr
-from pipeline import analyze
-from config import LANGUAGE_OPTIONS
+from pipeline import analyze, AnalysisResult
+from config import (
+    LANGUAGE_OPTIONS,
+    KEY_OPTIONS,
+    MOOD_OPTIONS,
+    DRUM_GROOVE_OPTIONS,
+    INSTRUMENT_OPTIONS,
+    VOCAL_STYLE_OPTIONS,
+)
 from utils.audio_io import format_time
+from music_generation.lyria_client import is_available as lyria_available, generate_music
+from music_generation.prompt_builder import (
+    build_lyria_prompt,
+    build_suno_style_from_fields,
+    build_udio_prompt_from_fields,
+)
 
 
 def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
     """Main analysis function called by the Gradio UI."""
     if audio_file is None:
         empty = "Please upload an audio file."
-        return (empty,) + ("",) * 12
+        return (empty,) + ("",) * 12 + (None,)
 
     def progress_callback(step, fraction):
         progress(fraction, desc=step)
@@ -141,28 +154,152 @@ def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
         translated_prompt,
         translation_text,
         errors_text,
+        result,  # AnalysisResult stored in gr.State for Music Creator
     )
+
+
+def prefill_creator(analysis_result):
+    """Extract fields from AnalysisResult to pre-fill the Music Creator tab."""
+    if analysis_result is None:
+        return [gr.update()] * 9
+
+    r = analysis_result
+    bpm = r.rhythm.bpm if r.rhythm else 120.0
+    key = r.key.key if r.key else "C major"
+    chord_prog = ""
+    if hasattr(r, "chords") and r.chords and hasattr(r.chords, "progression_str"):
+        chord_prog = r.chords.progression_str
+    lyrics = r.lyrics.full_text if r.lyrics else ""
+    mood = r.emotion.overall_mood if r.emotion else ""
+    instruments = r.instruments.detected if r.instruments else []
+    vocal_tags = r.vocal_style.style_tags if r.vocal_style else []
+    drum_groove = ""
+    if hasattr(r, "drums") and r.drums and hasattr(r.drums, "groove_type"):
+        drum_groove = r.drums.groove_type
+    language = LANGUAGE_OPTIONS.get(
+        r.lyrics.detected_language if r.lyrics else "", "English"
+    )
+
+    # Map detected instruments to checkbox options
+    matched_instruments = []
+    if instruments:
+        inst_lower = " ".join(instruments).lower()
+        for opt in INSTRUMENT_OPTIONS:
+            opt_low = opt.lower()
+            if any(word in inst_lower for word in opt_low.split(" / ")[0].split()):
+                matched_instruments.append(opt)
+
+    # Map vocal tags to checkbox options
+    matched_vocal = []
+    if vocal_tags:
+        tags_lower = " ".join(vocal_tags).lower()
+        for opt in VOCAL_STYLE_OPTIONS:
+            if opt.lower().split("/")[0].strip() in tags_lower or opt.lower() in tags_lower:
+                matched_vocal.append(opt)
+
+    # Match mood to dropdown
+    matched_mood = ""
+    if mood:
+        mood_low = mood.lower()
+        for opt in MOOD_OPTIONS:
+            if any(w in mood_low for w in opt.lower().split(" / ")):
+                matched_mood = opt
+                break
+
+    # Match drum groove
+    matched_drum = ""
+    if drum_groove:
+        drum_low = drum_groove.lower()
+        for opt in DRUM_GROOVE_OPTIONS:
+            if any(w in drum_low for w in opt.lower().split(" / ")):
+                matched_drum = opt
+                break
+
+    return [
+        gr.update(value=bpm),           # bpm_slider
+        gr.update(value=key if key in KEY_OPTIONS else "C major"),  # key_dropdown
+        gr.update(value=chord_prog),    # chord_input
+        gr.update(value=lyrics),        # lyrics_input
+        gr.update(value=matched_mood),  # mood_dropdown
+        gr.update(value=matched_instruments),  # instruments_checkbox
+        gr.update(value=matched_vocal),        # vocal_checkbox
+        gr.update(value=matched_drum),         # drum_dropdown
+        gr.update(value=language),             # language_dropdown
+    ]
+
+
+def do_generate_lyria(api_key, bpm, key, chord_prog, lyrics, mood, instruments,
+                      vocal_tags, drum_groove, language, genre):
+    """Generate music with Lyria and return audio path + prompt preview + status."""
+    if not api_key:
+        return None, "", "Error: Please enter your Gemini API Key."
+
+    prompt = build_lyria_prompt(
+        bpm=bpm, key=key, chord_progression=chord_prog, lyrics=lyrics,
+        instruments=instruments or None, mood=mood,
+        vocal_style_tags=vocal_tags or None, drum_groove=drum_groove,
+        language=language, genre=genre,
+    )
+
+    result = generate_music(prompt, api_key=api_key)
+    if result.success:
+        return result.audio_path, prompt, f"Generation successful! Duration: {result.duration_seconds:.1f}s"
+    else:
+        return None, prompt, f"Error: {result.error}"
+
+
+def do_copy_suno(bpm, key, chord_prog, lyrics, mood, instruments,
+                 vocal_tags, drum_groove, language, genre):
+    """Build Suno style + lyrics for copy-paste."""
+    style = build_suno_style_from_fields(
+        bpm=bpm, key=key, chord_progression=chord_prog,
+        instruments=instruments or None, mood=mood,
+        vocal_style_tags=vocal_tags or None, drum_groove=drum_groove,
+        language=language, genre=genre,
+    )
+    lyrics_out = lyrics.strip() if lyrics else ""
+    return style, lyrics_out
+
+
+def do_copy_udio(bpm, key, chord_prog, lyrics, mood, instruments,
+                 vocal_tags, drum_groove, language, genre):
+    """Build Udio-format prompt for copy-paste."""
+    prompt = build_udio_prompt_from_fields(
+        bpm=bpm, key=key, chord_progression=chord_prog, lyrics=lyrics,
+        instruments=instruments or None, mood=mood,
+        vocal_style_tags=vocal_tags or None, drum_groove=drum_groove,
+        language=language, genre=genre,
+    )
+    return prompt
 
 
 # Build Gradio UI
 lang_choices = [(v, k) for k, v in LANGUAGE_OPTIONS.items()]
 target_choices = [(v, k) for k, v in LANGUAGE_OPTIONS.items() if k != "auto"]
+creator_lang_choices = [
+    "English", "Chinese", "Japanese", "Korean", "Spanish",
+    "French", "German", "Portuguese", "Russian", "Arabic", "Italian", "Thai",
+]
 
 with gr.Blocks(
-    title="MusicLens - 音乐完整复刻分析",
+    title="MusicLens - 音乐完整复刻分析 & 创作",
     theme=gr.themes.Soft(),
     css="""
     .main-title { text-align: center; margin-bottom: 0.5em; }
     .subtitle { text-align: center; color: #666; margin-bottom: 1.5em; }
     .prompt-box textarea { font-family: monospace !important; font-size: 13px !important; }
+    .creator-section { border: 1px solid #ddd; border-radius: 8px; padding: 12px; margin: 4px 0; }
     """
 ) as demo:
+    # Shared state for analysis result
+    analysis_state = gr.State(value=None)
+
     gr.HTML("""
     <div class="main-title">
-        <h1>MusicLens - 音乐完整复刻分析工具</h1>
+        <h1>MusicLens - 音乐完整复刻分析 & 创作工具</h1>
     </div>
     <div class="subtitle">
-        <p>上传音乐 → 自动分析歌词 / 音调 / 节奏 / 语气 / 力度 / 情感 / 结构 → 生成 100% 还原提示词 → 复制到 Suno/Udio 生成复刻版或外语版</p>
+        <p>上传音乐 → 自动分析 → 编辑参数 → 直接用 Lyria 生成音乐 / 导出到 Suno·Udio</p>
     </div>
     """)
 
@@ -190,6 +327,162 @@ with gr.Blocks(
             )
 
     with gr.Tabs():
+        # =====================================================================
+        # TAB: Music Creator / 音乐创作
+        # =====================================================================
+        with gr.TabItem("Music Creator / 音乐创作"):
+            gr.Markdown(
+                "**分析完成后参数会自动预填。** 可编辑任意字段，然后用 Lyria 生成或导出到 Suno/Udio。"
+            )
+
+            with gr.Row():
+                # --- Left column: parameters ---
+                with gr.Column(scale=1):
+                    api_key_input = gr.Textbox(
+                        label="Gemini API Key (for Lyria generation)",
+                        type="password",
+                        placeholder="Enter your API key...",
+                    )
+                    genre_input = gr.Textbox(
+                        label="Genre / 流派",
+                        placeholder="e.g. Pop, Rock, R&B, Electronic...",
+                    )
+                    bpm_slider = gr.Slider(
+                        minimum=40, maximum=220, value=120, step=1,
+                        label="BPM / 速度",
+                    )
+                    key_dropdown = gr.Dropdown(
+                        choices=KEY_OPTIONS, value="C major",
+                        label="Key / 调性",
+                    )
+                    chord_input = gr.Textbox(
+                        label="Chord Progression / 和弦进行",
+                        placeholder="e.g. C - Am - F - G",
+                    )
+                    drum_dropdown = gr.Dropdown(
+                        choices=[""] + DRUM_GROOVE_OPTIONS,
+                        value="",
+                        label="Drum Groove / 鼓点节奏",
+                    )
+                    mood_dropdown = gr.Dropdown(
+                        choices=[""] + MOOD_OPTIONS,
+                        value="",
+                        label="Mood / 情绪",
+                    )
+                    language_dropdown = gr.Dropdown(
+                        choices=creator_lang_choices,
+                        value="English",
+                        label="Language / 演唱语言",
+                    )
+
+                # --- Right column: content ---
+                with gr.Column(scale=1):
+                    lyrics_input = gr.Textbox(
+                        label="Lyrics / 歌词",
+                        lines=12,
+                        placeholder="Paste or edit lyrics here...",
+                    )
+                    instruments_checkbox = gr.CheckboxGroup(
+                        choices=INSTRUMENT_OPTIONS,
+                        label="Instruments / 乐器",
+                    )
+                    vocal_checkbox = gr.CheckboxGroup(
+                        choices=VOCAL_STYLE_OPTIONS,
+                        label="Vocal Style / 演唱风格",
+                    )
+
+            # Pre-fill button
+            prefill_btn = gr.Button("Pre-fill from Analysis / 从分析结果预填", variant="secondary")
+
+            # --- Action buttons ---
+            with gr.Row():
+                generate_btn = gr.Button(
+                    "Generate with Lyria / Lyria 生成",
+                    variant="primary",
+                    size="lg",
+                )
+                suno_btn = gr.Button("Copy for Suno / 导出 Suno", variant="secondary")
+                udio_btn = gr.Button("Copy for Udio / 导出 Udio", variant="secondary")
+
+            # --- Output area ---
+            with gr.Row():
+                with gr.Column():
+                    generated_audio = gr.Audio(
+                        label="Generated Audio / 生成的音频",
+                        type="filepath",
+                        interactive=False,
+                    )
+                    generation_status = gr.Textbox(
+                        label="Status / 状态", interactive=False, lines=2,
+                    )
+                with gr.Column():
+                    prompt_preview = gr.Textbox(
+                        label="Lyria Prompt Preview / 提示词预览",
+                        lines=8, interactive=False, show_copy_button=True,
+                        elem_classes=["prompt-box"],
+                    )
+
+            # Suno export outputs
+            with gr.Row(visible=False) as suno_export_row:
+                pass
+            suno_style_output = gr.Textbox(
+                label="Suno Style (copy to Style box) / Suno 风格",
+                lines=4, interactive=False, show_copy_button=True,
+                elem_classes=["prompt-box"],
+            )
+            suno_lyrics_output = gr.Textbox(
+                label="Suno Lyrics (copy to Lyrics box) / Suno 歌词",
+                lines=8, interactive=False, show_copy_button=True,
+                elem_classes=["prompt-box"],
+            )
+            udio_output = gr.Textbox(
+                label="Udio Prompt (copy to Udio) / Udio 提示词",
+                lines=8, interactive=False, show_copy_button=True,
+                elem_classes=["prompt-box"],
+            )
+
+            # Shared input list for generation/export
+            creator_inputs = [
+                bpm_slider, key_dropdown, chord_input, lyrics_input,
+                mood_dropdown, instruments_checkbox, vocal_checkbox,
+                drum_dropdown, language_dropdown, genre_input,
+            ]
+
+            # Wire prefill
+            prefill_btn.click(
+                fn=prefill_creator,
+                inputs=[analysis_state],
+                outputs=[
+                    bpm_slider, key_dropdown, chord_input, lyrics_input,
+                    mood_dropdown, instruments_checkbox, vocal_checkbox,
+                    drum_dropdown, language_dropdown,
+                ],
+            )
+
+            # Wire generate
+            generate_btn.click(
+                fn=do_generate_lyria,
+                inputs=[api_key_input] + creator_inputs,
+                outputs=[generated_audio, prompt_preview, generation_status],
+            )
+
+            # Wire Suno export
+            suno_btn.click(
+                fn=do_copy_suno,
+                inputs=creator_inputs,
+                outputs=[suno_style_output, suno_lyrics_output],
+            )
+
+            # Wire Udio export
+            udio_btn.click(
+                fn=do_copy_udio,
+                inputs=creator_inputs,
+                outputs=[udio_output],
+            )
+
+        # =====================================================================
+        # Analysis Result Tabs (existing)
+        # =====================================================================
         with gr.TabItem("Overview / 总览"):
             basic_output = gr.Textbox(
                 label="Basic Info / 基本信息",
@@ -273,6 +566,7 @@ with gr.Blocks(
                 lines=10, interactive=False,
             )
 
+    # Wire analysis button — outputs include analysis_state
     analyze_btn.click(
         fn=run_analysis,
         inputs=[audio_input, source_lang, target_lang],
@@ -290,6 +584,15 @@ with gr.Blocks(
             translated_prompt_output,
             translation_output,
             errors_output,
+            analysis_state,
+        ],
+    ).then(
+        fn=prefill_creator,
+        inputs=[analysis_state],
+        outputs=[
+            bpm_slider, key_dropdown, chord_input, lyrics_input,
+            mood_dropdown, instruments_checkbox, vocal_checkbox,
+            drum_dropdown, language_dropdown,
         ],
     )
 
@@ -301,7 +604,9 @@ with gr.Blocks(
         Krumhansl-Kessler (key) | Self-Similarity (structure) | Spectral (instruments) |
         Vibrato/Dynamics/Register (vocal style) | Valence-Arousal (emotion) | RMS Loudness (dynamics)
 
-        **How to use / 使用流程**: Upload → Analyze → Copy "Suno Prompt" or "Full Prompt" → Paste into Suno/Udio → Generate
+        **Music Creator / 音乐创作**: Edit parameters → Generate with Lyria / Export to Suno / Udio
+
+        **REST API**: Run `uvicorn api:app` for programmatic access at `/api/health`, `/api/analyze`, `/api/generate`
         """
     )
 
