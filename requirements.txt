@@ -1,0 +1,11 @@
+librosa>=0.10.1
+openai-whisper>=20231117
+gradio>=4.0
+numpy
+scipy
+soundfile
+torch
+torchaudio
+pydub
+matplotlib
+deep-translator
