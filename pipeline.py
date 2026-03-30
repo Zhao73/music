@@ -16,6 +16,7 @@ Flow:
 13. Analyze dynamics on full mix
 14. Translate if needed
 15. Generate comprehensive reproduction prompts
+16. Generate visual score (sheet music)
 """
 
 from dataclasses import dataclass, field
@@ -24,8 +25,7 @@ import tempfile
 import numpy as np
 
 from utils.audio_io import load_audio, get_duration, format_time
-from analyzers.lyrics import extract_lyrics, LyricsResult
-from analyzers.melody import extract_melody, MelodyResult
+from analyzers.lyrics import LyricsResult
 from analyzers.rhythm import extract_rhythm, RhythmResult
 from analyzers.key_detector import detect_key, KeyResult
 from analyzers.structure import detect_structure, StructureResult
@@ -33,12 +33,34 @@ from analyzers.instruments import detect_instruments, InstrumentResult
 from analyzers.vocal_style import analyze_vocal_style, VocalStyleResult
 from analyzers.emotion import analyze_emotion, EmotionResult
 from analyzers.dynamics import analyze_dynamics, DynamicsResult
-from analyzers.separator import separate_tracks, SeparationResult
 from analyzers.chords import detect_chords, ChordResult
-from analyzers.drums import analyze_drums, DrumResult
 from analyzers.score_generator import generate_score, ScoreResult
 from translation.translator import translate_lyrics, TranslationResult
 from prompt_generator.generator import generate_prompt, PromptResult
+from analyzers.melody import MelodyResult
+
+# Optional imports — may fail if heavy deps (torch/demucs/whisper) are missing
+try:
+    from analyzers.separator import separate_tracks, SeparationResult
+except Exception:
+    separate_tracks = None
+    SeparationResult = None
+
+try:
+    from analyzers.lyrics import extract_lyrics
+except Exception:
+    extract_lyrics = None
+
+try:
+    from analyzers.melody import extract_melody
+except Exception:
+    extract_melody = None
+
+try:
+    from analyzers.drums import analyze_drums, DrumResult
+except Exception:
+    analyze_drums = None
+    DrumResult = None
 
 
 @dataclass
@@ -88,6 +110,7 @@ def analyze(
 
     Key improvement: uses Demucs source separation to analyze
     vocals, drums, bass, and harmony independently.
+    Gracefully degrades if optional dependencies are missing.
     """
     result = AnalysisResult()
     total_steps = 16
@@ -118,54 +141,62 @@ def analyze(
     y_bass = None
     y_other = None
 
-    try:
-        sep = separate_tracks(audio_path, sr=sr)
-        result.separation = sep
+    if separate_tracks is None:
+        result.errors.append("Separator not available (torch/demucs not installed), using full mix")
+        result.steps_completed.append("separation_skipped")
+    else:
+        try:
+            sep = separate_tracks(audio_path, sr=sr)
+            result.separation = sep
 
-        if sep.success:
-            y_vocals = sep.vocals
-            y_drums = sep.drums
-            y_bass = sep.bass
-            y_other = sep.other
-            result.separation_used = True
-            result.steps_completed.append("separation_demucs")
-        else:
-            # HPSS fallback
-            y_vocals = sep.vocals
-            y_drums = sep.drums
-            y_bass = sep.bass
-            y_other = sep.other
-            result.separation_used = False
-            result.steps_completed.append("separation_hpss_fallback")
-            if sep.error:
-                result.errors.append(f"Demucs fallback: {sep.error}")
-    except Exception as e:
-        result.errors.append(f"Separation failed, using full mix: {e}")
-        result.steps_completed.append("separation_failed")
+            if sep.success:
+                y_vocals = sep.vocals
+                y_drums = sep.drums
+                y_bass = sep.bass
+                y_other = sep.other
+                result.separation_used = True
+                result.steps_completed.append("separation_demucs")
+            else:
+                # HPSS fallback
+                y_vocals = sep.vocals
+                y_drums = sep.drums
+                y_bass = sep.bass
+                y_other = sep.other
+                result.separation_used = False
+                result.steps_completed.append("separation_hpss_fallback")
+                if sep.error:
+                    result.errors.append(f"Demucs fallback: {sep.error}")
+        except Exception as e:
+            result.errors.append(f"Separation failed, using full mix: {e}")
+            result.steps_completed.append("separation_failed")
 
     # ============================================================
     # Step 3: Extract lyrics — on ISOLATED VOCALS (much more accurate)
     # ============================================================
     update_progress("Extracting lyrics from isolated vocals...", 3)
-    try:
-        # Save isolated vocals to temp file for Whisper
-        if result.separation_used or y_vocals is not y_full:
-            import soundfile as sf
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                vocals_path = tmp.name
-                sf.write(vocals_path, y_vocals, sr)
-            try:
-                lang = source_language if source_language and source_language != "auto" else None
-                result.lyrics = extract_lyrics(vocals_path, language=lang)
-            finally:
-                os.unlink(vocals_path)
-        else:
-            lang = source_language if source_language and source_language != "auto" else None
-            result.lyrics = extract_lyrics(audio_path, language=lang)
-        result.steps_completed.append("lyrics_extracted")
-    except Exception as e:
-        result.errors.append(f"Lyrics extraction failed: {e}")
+    if extract_lyrics is None:
+        result.errors.append("Whisper not available (openai-whisper not installed), skipping lyrics")
         result.lyrics = LyricsResult(full_text="", segments=[], detected_language="")
+    else:
+        try:
+            # Save isolated vocals to temp file for Whisper
+            if result.separation_used or y_vocals is not y_full:
+                import soundfile as sf
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    vocals_path = tmp.name
+                    sf.write(vocals_path, y_vocals, sr)
+                try:
+                    lang = source_language if source_language and source_language != "auto" else None
+                    result.lyrics = extract_lyrics(vocals_path, language=lang)
+                finally:
+                    os.unlink(vocals_path)
+            else:
+                lang = source_language if source_language and source_language != "auto" else None
+                result.lyrics = extract_lyrics(audio_path, language=lang)
+            result.steps_completed.append("lyrics_extracted")
+        except Exception as e:
+            result.errors.append(f"Lyrics extraction failed: {e}")
+            result.lyrics = LyricsResult(full_text="", segments=[], detected_language="")
 
     # ============================================================
     # Step 4: Analyze rhythm (on full mix — beat tracking works best on mix)
@@ -195,12 +226,15 @@ def analyze(
     # Step 6: Extract melody — on ISOLATED VOCALS (much more accurate)
     # ============================================================
     update_progress("Extracting melody from isolated vocals...", 6)
-    try:
-        bpm = result.rhythm.bpm if result.rhythm else 120.0
-        result.melody = extract_melody(y_vocals, sr, bpm=bpm)
-        result.steps_completed.append("melody_extracted")
-    except Exception as e:
-        result.errors.append(f"Melody extraction failed: {e}")
+    if extract_melody is None:
+        result.errors.append("Melody extraction not available, skipping")
+    else:
+        try:
+            bpm = result.rhythm.bpm if result.rhythm else 120.0
+            result.melody = extract_melody(y_vocals, sr, bpm=bpm)
+            result.steps_completed.append("melody_extracted")
+        except Exception as e:
+            result.errors.append(f"Melody extraction failed: {e}")
 
     # ============================================================
     # Step 7: Detect structure (on full mix)
@@ -243,14 +277,17 @@ def analyze(
     # Step 10: Drum patterns — on ISOLATED DRUMS
     # ============================================================
     update_progress("Analyzing drum patterns...", 10)
-    try:
-        y_for_drums = y_drums if y_drums is not None else y_full
-        bpm = result.rhythm.bpm if result.rhythm else 120.0
-        beat_times = result.rhythm.beat_times if result.rhythm else None
-        result.drum_patterns = analyze_drums(y_for_drums, sr, bpm=bpm, beat_times=beat_times)
-        result.steps_completed.append("drums_analyzed")
-    except Exception as e:
-        result.errors.append(f"Drum analysis failed: {e}")
+    if analyze_drums is None:
+        result.errors.append("Drum analysis not available, skipping")
+    else:
+        try:
+            y_for_drums = y_drums if y_drums is not None else y_full
+            bpm = result.rhythm.bpm if result.rhythm else 120.0
+            beat_times = result.rhythm.beat_times if result.rhythm else None
+            result.drum_patterns = analyze_drums(y_for_drums, sr, bpm=bpm, beat_times=beat_times)
+            result.steps_completed.append("drums_analyzed")
+        except Exception as e:
+            result.errors.append(f"Drum analysis failed: {e}")
 
     # ============================================================
     # Step 11: Vocal style — on ISOLATED VOCALS
@@ -341,7 +378,7 @@ def analyze(
             dynamic_events=result.dynamics.markings if result.dynamics else [],
             rhythm_description=result.rhythm.description if result.rhythm else "",
             lyrics_segments=result.lyrics.segments if result.lyrics else [],
-            # New: chords & drums
+            # Chords & drums
             chord_progression=result.chords.chord_progression if result.chords else "",
             chord_per_section=result.chords.progression_per_section if result.chords else {},
             chord_description=result.chords.description if result.chords else "",

@@ -1,7 +1,6 @@
 """Lyrics extraction using OpenAI Whisper."""
 
 from dataclasses import dataclass, field
-import whisper
 
 from config import WHISPER_MODEL_SIZE
 
@@ -14,10 +13,22 @@ class LyricsResult:
 
 
 _model = None
+WHISPER_AVAILABLE = True
+
+try:
+    import whisper
+except ImportError:
+    WHISPER_AVAILABLE = False
+    whisper = None
 
 
 def _get_model():
     global _model
+    if not WHISPER_AVAILABLE:
+        raise RuntimeError(
+            "openai-whisper is not installed. "
+            "Install it with: pip install openai-whisper"
+        )
     if _model is None:
         _model = whisper.load_model(WHISPER_MODEL_SIZE)
     return _model
