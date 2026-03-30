@@ -1,26 +1,27 @@
-"""Prompt templates for AI music generation — maximum reproduction fidelity."""
+"""Prompt templates for AI music generation — matched to actual tool UIs."""
 
-# Suno AI style prompt — structured for best Suno results
-SUNO_TEMPLATE = """\
-[Genre: {genre}]
-[BPM: {bpm}]
-[Key: {key}]
-[Time Signature: {time_signature}]
-[Mood: {mood}]
-[Feel: {feel}]
-[Energy: {energy}]
-[Instruments: {instruments}]
-[Vocal Range: {vocal_range}]
-[Vocal Style: {vocal_style_tags}]
-[Dynamics: {dynamics_marking}]
-[Chord Progression: {chord_progression}]
-[Drum Pattern: {drum_groove}]
-[Language: {language}]
+# ============================================================
+# SUNO — Custom Mode has TWO separate input fields:
+#   1. "歌詞" (Lyrics) — paste lyrics here
+#   2. "スタイル" (Style) — paste style description here
+# Our output must be split into two copyable sections.
+# ============================================================
 
-{structured_lyrics}
+# Goes into Suno's "スタイル / Style" text box
+SUNO_STYLE_TEMPLATE = """\
+{genre}, {key}, {bpm} BPM, {time_signature}, {feel}, {energy}, {mood}, {instruments}, vocal {vocal_range}, {vocal_style_tags}, {dynamics_marking}, chords: {chord_progression}, {drum_groove}, {language}\
 """
 
-# Complete reproduction prompt — ALL analysis details for 95%+ fidelity
+# Goes into Suno's "歌詞 / Lyrics" text box
+# Suno recognizes [Verse], [Chorus], [Bridge], [Intro], [Outro] markers
+SUNO_LYRICS_TEMPLATE = """\
+{structured_lyrics}\
+"""
+
+# ============================================================
+# Complete reproduction prompt — ALL analysis details
+# For reference / Udio / other tools
+# ============================================================
 GENERIC_TEMPLATE = """\
 === COMPLETE MUSIC REPRODUCTION PROMPT ===
 === Target: 95%+ faithful reproduction  ===
@@ -83,7 +84,7 @@ GENERIC_TEMPLATE = """\
 {notes}
 """
 
-# Udio style prompt — concise but complete
+# Udio style prompt — concise single block
 UDIO_TEMPLATE = """\
 {genre} song in {key}, {bpm} BPM, {time_signature} time.
 {feel}, {energy}. Mood: {mood}.

@@ -1,13 +1,20 @@
 """Assembles all analysis results into comprehensive reproduction prompts."""
 
 from dataclasses import dataclass
-from prompt_generator.templates import SUNO_TEMPLATE, GENERIC_TEMPLATE, UDIO_TEMPLATE
+from prompt_generator.templates import (
+    SUNO_STYLE_TEMPLATE, SUNO_LYRICS_TEMPLATE,
+    GENERIC_TEMPLATE, UDIO_TEMPLATE,
+)
 from config import LANGUAGE_OPTIONS
 
 
 @dataclass
 class PromptResult:
-    suno_prompt: str
+    # Suno Custom Mode — two separate fields
+    suno_style: str             # → paste into Suno "スタイル / Style" box
+    suno_lyrics: str            # → paste into Suno "歌詞 / Lyrics" box
+    suno_lyrics_translated: str # → translated lyrics for Suno
+    # Other formats
     udio_prompt: str
     generic_prompt: str
     translated_prompt: str
@@ -209,12 +216,26 @@ def generate_prompt(
         hihat_pattern=hihat_pattern or "",
     )
 
-    # --- Suno prompt ---
-    suno = SUNO_TEMPLATE.format(
+    # ==========================================================
+    # SUNO — Split into Style + Lyrics (matches Suno Custom UI)
+    # ==========================================================
+    suno_style = SUNO_STYLE_TEMPLATE.format(
         **common,
         language=lang_name,
+    )
+
+    suno_lyrics = SUNO_LYRICS_TEMPLATE.format(
         structured_lyrics=structured_lyrics,
     )
+
+    # Translated Suno lyrics
+    suno_lyrics_translated = ""
+    if translated_text and target_lang:
+        target_lang_name = LANGUAGE_OPTIONS.get(target_lang, target_lang)
+        translated_structured = _build_structured_lyrics(translated_text, sections)
+        suno_lyrics_translated = SUNO_LYRICS_TEMPLATE.format(
+            structured_lyrics=translated_structured,
+        )
 
     # --- Udio prompt ---
     udio = UDIO_TEMPLATE.format(
@@ -237,7 +258,7 @@ def generate_prompt(
         ),
     )
 
-    # --- Translated version ---
+    # --- Translated full prompt ---
     translated_prompt = ""
     if translated_text and target_lang:
         target_lang_name = LANGUAGE_OPTIONS.get(target_lang, target_lang)
@@ -258,7 +279,9 @@ def generate_prompt(
         )
 
     return PromptResult(
-        suno_prompt=suno,
+        suno_style=suno_style,
+        suno_lyrics=suno_lyrics,
+        suno_lyrics_translated=suno_lyrics_translated,
         udio_prompt=udio,
         generic_prompt=generic,
         translated_prompt=translated_prompt,
