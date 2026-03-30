@@ -71,9 +71,13 @@ def extract_melody(y: np.ndarray, sr: int, bpm: float = 120.0) -> MelodyResult:
         sr: Sample rate.
         bpm: Detected BPM (for duration classification).
     """
+    # Limit audio length to avoid memory issues with pyin (max ~60s)
+    max_samples = sr * 60
+    y_analysis = y[:max_samples] if len(y) > max_samples else y
+
     # PYIN pitch tracking
     f0, voiced_flag, voiced_probs = librosa.pyin(
-        y,
+        y_analysis,
         fmin=librosa.note_to_hz("C2"),
         fmax=librosa.note_to_hz("C7"),
         sr=sr,

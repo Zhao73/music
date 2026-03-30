@@ -7,7 +7,7 @@ import os
 # ==============================================================
 
 # Whisper model size: "tiny", "base", "small", "medium", "large"
-WHISPER_MODEL_SIZE = "base"
+WHISPER_MODEL_SIZE = "large"
 
 # Default sample rate for audio processing
 SAMPLE_RATE = 22050
