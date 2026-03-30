@@ -36,6 +36,7 @@ from analyzers.dynamics import analyze_dynamics, DynamicsResult
 from analyzers.separator import separate_tracks, SeparationResult
 from analyzers.chords import detect_chords, ChordResult
 from analyzers.drums import analyze_drums, DrumResult
+from analyzers.score_generator import generate_score, ScoreResult
 from translation.translator import translate_lyrics, TranslationResult
 from prompt_generator.generator import generate_prompt, PromptResult
 
@@ -69,6 +70,9 @@ class AnalysisResult:
     # Generated prompts
     prompts: PromptResult = None
 
+    # Score / sheet music
+    score: ScoreResult = None
+
     # Status tracking
     steps_completed: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -86,7 +90,7 @@ def analyze(
     vocals, drums, bass, and harmony independently.
     """
     result = AnalysisResult()
-    total_steps = 15
+    total_steps = 16
 
     def update_progress(step, num):
         if progress_callback:
@@ -352,6 +356,29 @@ def analyze(
         result.steps_completed.append("prompts_generated")
     except Exception as e:
         result.errors.append(f"Prompt generation failed: {e}")
+
+    # ============================================================
+    # Step 16: Generate visual score (MusicXML / MIDI / PDF)
+    # ============================================================
+    update_progress("Generating visual score (sheet music)...", 16)
+    try:
+        result.score = generate_score(
+            note_events=result.melody.note_events if result.melody else None,
+            chord_events=result.chords.chords if result.chords else None,
+            drum_result=result.drum_patterns,
+            key_str=result.key.key if result.key else "C major",
+            time_signature=result.rhythm.time_signature if result.rhythm else "4/4",
+            bpm=result.rhythm.bpm if result.rhythm else 120.0,
+            total_duration=result.duration_seconds,
+            lyrics_segments=result.lyrics.segments if result.lyrics else None,
+            title="MusicLens Analysis",
+        )
+        if result.score.success:
+            result.steps_completed.append("score_generated")
+        else:
+            result.errors.append(f"Score: {result.score.error}")
+    except Exception as e:
+        result.errors.append(f"Score generation failed: {e}")
 
     update_progress("Done! Analysis complete.", total_steps)
     return result

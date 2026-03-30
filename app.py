@@ -27,7 +27,7 @@ from music_generation.prompt_builder import (
 def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
     if audio_file is None:
         empty = "Please upload an audio file. / 请上传音乐文件。"
-        return (empty,) + ("",) * 15 + (None,)
+        return (empty,) + ("",) * 15 + ("", None, None, None) + (None,)
 
     def progress_callback(step, fraction):
         progress(fraction, desc=step)
@@ -127,11 +127,25 @@ def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
     if result.errors:
         log += "\n".join(f"  - {e}" for e in result.errors)
 
+    # --- 17. Score / Sheet Music ---
+    score_info = ""
+    score_xml = None
+    score_midi = None
+    score_pdf = None
+    if result.score and result.score.success:
+        score_info = result.score.summary
+        score_xml = result.score.musicxml_path if result.score.musicxml_path else None
+        score_midi = result.score.midi_path if result.score.midi_path else None
+        score_pdf = result.score.pdf_path if result.score.pdf_path else None
+    elif result.score and result.score.error:
+        score_info = f"Score generation issue: {result.score.error}"
+
     return (
         info, lyrics, melody, chords, drums, structure,
         vocal, emotion, dynamics, instruments,
         suno_style, suno_lyrics,
         generic, suno_translated, translation, log,
+        score_info, score_xml, score_midi, score_pdf,
         result,  # AnalysisResult stored in gr.State for Music Creator
     )
 
@@ -523,10 +537,21 @@ with gr.Blocks(
         with gr.TabItem("Translation / 翻译"):
             out_translation = gr.Textbox(label="Translated Lyrics", lines=20, interactive=False, show_copy_button=True)
 
+        with gr.TabItem("Score / 乐谱"):
+            gr.Markdown(
+                "**自动生成的可视化乐谱** — 包含旋律五线谱、和弦标记、鼓谱。\n\n"
+                "下载 MusicXML 可导入 MuseScore/Finale/Sibelius 编辑，MIDI 可直接播放。"
+            )
+            out_score_info = gr.Textbox(label="Score Info / 乐谱信息", lines=5, interactive=False)
+            with gr.Row():
+                out_score_xml = gr.File(label="Download MusicXML / 下载 MusicXML（可导入 MuseScore）", interactive=False)
+                out_score_midi = gr.File(label="Download MIDI / 下载 MIDI（可播放）", interactive=False)
+                out_score_pdf = gr.File(label="Download PDF/PNG / 下载乐谱图片", interactive=False)
+
         with gr.TabItem("Log"):
             out_log = gr.Textbox(label="Log", lines=10, interactive=False)
 
-    # Wire analysis button — outputs include analysis_state
+    # Wire analysis button — outputs include score files + analysis_state
     btn.click(
         fn=run_analysis,
         inputs=[audio_input, source_lang, target_lang],
@@ -535,6 +560,7 @@ with gr.Blocks(
             out_vocal, out_emotion, out_dynamics, out_instruments,
             out_suno_style, out_suno_lyrics,
             out_generic, out_suno_translated, out_translation, out_log,
+            out_score_info, out_score_xml, out_score_midi, out_score_pdf,
             analysis_state,
         ],
     ).then(
