@@ -1,7 +1,12 @@
 """Lyrics translation using deep-translator (Google Translate, free)."""
 
 from dataclasses import dataclass
-from deep_translator import GoogleTranslator
+
+try:
+    from deep_translator import GoogleTranslator
+    TRANSLATOR_AVAILABLE = True
+except ImportError:
+    TRANSLATOR_AVAILABLE = False
 
 
 @dataclass
@@ -34,16 +39,10 @@ def translate_lyrics(
     source_lang: str,
     target_lang: str,
 ) -> TranslationResult:
-    """Translate lyrics while preserving line structure.
+    """Translate lyrics while preserving line structure."""
+    if not TRANSLATOR_AVAILABLE:
+        raise RuntimeError("deep-translator is not installed. Run: pip install deep-translator")
 
-    Args:
-        text: Original lyrics text.
-        source_lang: Source language code (e.g., 'zh', 'en').
-        target_lang: Target language code.
-
-    Returns:
-        TranslationResult with original and translated text.
-    """
     src = LANG_MAP.get(source_lang, source_lang)
     tgt = LANG_MAP.get(target_lang, target_lang)
 

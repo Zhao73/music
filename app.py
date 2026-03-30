@@ -32,12 +32,18 @@ def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
     def progress_callback(step, fraction):
         progress(fraction, desc=step)
 
-    result = analyze(
-        audio_path=audio_file,
-        source_language=source_lang if source_lang != "auto" else None,
-        target_language=target_lang if target_lang else None,
-        progress_callback=progress_callback,
-    )
+    try:
+        result = analyze(
+            audio_path=audio_file,
+            source_language=source_lang if source_lang != "auto" else None,
+            target_language=target_lang if target_lang else None,
+            progress_callback=progress_callback,
+        )
+    except Exception as e:
+        import traceback
+        err_detail = traceback.format_exc()
+        error_msg = f"Analysis crashed: {e}\n\n{err_detail}"
+        return (error_msg,) + ("",) * 15 + ("", None, None, None) + (None,)
 
     # --- 1. Overview ---
     info = f"Duration: {result.duration}\n"
