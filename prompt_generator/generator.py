@@ -6,6 +6,11 @@ from prompt_generator.templates import (
     GENERIC_TEMPLATE, UDIO_TEMPLATE,
 )
 from config import LANGUAGE_OPTIONS
+from music_knowledge.hit_formulas import (
+    expand_vocal_tags,
+    build_dynamics_arc,
+    SECTION_DYNAMICS,
+)
 
 
 @dataclass
@@ -180,6 +185,16 @@ def generate_prompt(
     structure_detail = _build_structure_detail(sections)
     chord_section_str = _format_chord_per_section(chord_per_section or {})
 
+    # Vocal engineering — expand simple tags into rich descriptions
+    vocal_engineering = expand_vocal_tags(vocal_style_tags) if vocal_style_tags else "natural expressive delivery"
+
+    # Dynamics arc — section-by-section loudness journey
+    section_labels = [s.label for s in sections] if sections else []
+    dynamics_arc = build_dynamics_arc(section_labels) if section_labels else "gradual build from intimate verse to powerful chorus"
+
+    # Texture evolution — how instrumentation layers change
+    texture_evolution = _build_texture_evolution(sections, instruments)
+
     # Common template kwargs
     common = dict(
         genre=genre,
@@ -196,17 +211,20 @@ def generate_prompt(
         instruments=instruments_str,
         vocal_range=vocal_range,
         vocal_style_tags=vocal_tags_str,
+        vocal_engineering=vocal_engineering,
         vibrato=vibrato_desc or "natural",
         register=register_desc or "",
         tone=tone_desc or "",
         articulation=articulation_desc or "",
         dynamics_marking=dynamics_marking or "mf",
         dynamic_range=dynamic_range or "moderate",
+        dynamics_arc=dynamics_arc,
         volume_map=volume_map or "",
         melody_description=melody_description,
         melody_contour=melody_contour or "",
         melody_notation=melody_notation or "",
         structure_detail=structure_detail,
+        texture_evolution=texture_evolution,
         chord_progression=chord_progression or "not detected",
         chord_per_section=chord_section_str,
         drum_groove=drum_groove or "standard",
@@ -286,3 +304,33 @@ def generate_prompt(
         generic_prompt=generic,
         translated_prompt=translated_prompt,
     )
+
+
+def _build_texture_evolution(sections: list, instruments: list[str]) -> str:
+    """Build a description of how instrumentation layers evolve across sections."""
+    if not sections:
+        return "Consistent texture throughout"
+
+    parts = []
+    inst_list = instruments if instruments else ["the ensemble"]
+    n_inst = len(inst_list)
+
+    for i, s in enumerate(sections):
+        label = s.label if hasattr(s, "label") else str(s)
+        dyn = SECTION_DYNAMICS.get(label, SECTION_DYNAMICS.get("Verse", {}))
+        texture = dyn.get("texture", "standard")
+
+        if "intro" in label.lower() or "break" in label.lower():
+            count = max(1, n_inst // 3)
+            parts.append(f"{label}: {', '.join(inst_list[:count])} ({texture})")
+        elif "verse" in label.lower():
+            count = max(2, n_inst // 2)
+            parts.append(f"{label}: {', '.join(inst_list[:count])} ({texture})")
+        elif "chorus" in label.lower() or "drop" in label.lower():
+            parts.append(f"{label}: full band ({texture})")
+        elif "bridge" in label.lower():
+            parts.append(f"{label}: contrasting arrangement ({texture})")
+        else:
+            parts.append(f"{label}: {texture}")
+
+    return " → ".join(parts)

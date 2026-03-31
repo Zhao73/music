@@ -15,6 +15,13 @@ from pydantic import BaseModel, Field
 from pipeline import analyze
 from music_generation.lyria_client import is_available as lyria_available, generate_music
 from music_generation.prompt_builder import build_lyria_prompt, build_suno_style_from_fields, build_udio_prompt_from_fields
+from inspiration.generator import (
+    fully_random, random_from_genre, random_from_mood,
+    mutate_params, hit_optimized, format_inspiration,
+)
+from chart_data.knowledge_base import get_popularity_score, get_chart_patterns
+from chart_data.fetcher import is_billboard_available, fetch_billboard_hot100
+from chart_data.analyzer import format_chart_score
 
 app = FastAPI(
     title="MusicLens API",
@@ -77,6 +84,27 @@ class PromptRequest(BaseModel):
     drum_groove: str = ""
     language: str = "English"
     genre: str = ""
+
+
+class InspireRequest(BaseModel):
+    mode: str = "fully_random"  # fully_random, genre, mood, hit_formula
+    genre: str = "pop"
+    mood: str = ""
+    seed: int = None
+
+
+class MutateRequest(BaseModel):
+    params: dict = Field(default_factory=dict)
+    variation: float = 0.3
+    seed: int = None
+
+
+class ChartScoreRequest(BaseModel):
+    bpm: float = 0
+    key: str = ""
+    chord_progression: str = ""
+    mood: str = ""
+    duration_seconds: float = 0
 
 
 # ---------------------------------------------------------------------------
@@ -166,3 +194,64 @@ def build_prompt(req: PromptRequest):
         language=req.language, genre=req.genre,
     )
     return {"lyria_prompt": lyria, "suno_style": suno, "udio_prompt": udio}
+
+
+# ---------------------------------------------------------------------------
+# Inspiration Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/inspire")
+def inspire(req: InspireRequest):
+    """Generate random musically-valid parameters for inspiration."""
+    if req.mode == "genre":
+        result = random_from_genre(req.genre, seed=req.seed)
+    elif req.mode == "mood":
+        result = random_from_mood(req.mood, seed=req.seed)
+    elif req.mode == "hit_formula":
+        result = hit_optimized(req.genre, seed=req.seed)
+    else:
+        result = fully_random(seed=req.seed)
+
+    return _serialize(result)
+
+
+@app.post("/api/mutate")
+def mutate(req: MutateRequest):
+    """Mutate existing parameters with controlled variation."""
+    result = mutate_params(req.params, variation=req.variation, seed=req.seed)
+    return _serialize(result)
+
+
+# ---------------------------------------------------------------------------
+# Chart Data Endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/charts/patterns")
+def chart_patterns():
+    """Return the static chart patterns knowledge base."""
+    return get_chart_patterns()
+
+
+@app.post("/api/charts/score")
+def chart_score(req: ChartScoreRequest):
+    """Score parameters against chart patterns."""
+    params = {
+        "bpm": req.bpm,
+        "key": req.key,
+        "chord_progression": req.chord_progression,
+        "mood": req.mood,
+        "duration_seconds": req.duration_seconds,
+    }
+    # Remove empty values
+    params = {k: v for k, v in params.items() if v}
+    result = get_popularity_score(params)
+    return result
+
+
+@app.get("/api/charts/billboard")
+def billboard_hot100():
+    """Fetch current Billboard Hot 100 (requires billboard.py)."""
+    if not is_billboard_available():
+        return {"error": "billboard.py not installed", "tracks": []}
+    tracks = fetch_billboard_hot100()
+    return {"tracks": tracks}

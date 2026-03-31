@@ -22,6 +22,19 @@ from music_generation.prompt_builder import (
     build_suno_style_from_fields,
     build_udio_prompt_from_fields,
 )
+from inspiration.generator import (
+    fully_random,
+    random_from_genre,
+    random_from_mood,
+    mutate_params,
+    hit_optimized,
+    format_inspiration,
+    InspirationResult,
+    GENRES,
+)
+from chart_data.knowledge_base import get_popularity_score, get_chart_patterns, CHART_PATTERNS
+from chart_data.analyzer import format_chart_score
+from chart_data.fetcher import is_billboard_available, fetch_billboard_hot100
 
 
 def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
@@ -276,6 +289,163 @@ def do_copy_udio(bpm, key, chord_prog, lyrics, mood, instruments,
 
 
 # =========================================================================
+# Inspiration helper functions
+# =========================================================================
+
+def do_generate_inspiration(mode, genre, mood_sel, variation, seed_text):
+    """Generate inspiration based on selected mode."""
+    seed = int(seed_text) if seed_text and seed_text.strip().isdigit() else None
+
+    if mode == "Random Genre":
+        result = random_from_genre(genre or "pop", seed=seed)
+    elif mode == "Random Mood":
+        result = random_from_mood(mood_sel or "happy / energetic", seed=seed)
+    elif mode == "Hit Formula":
+        result = hit_optimized(genre or "pop", seed=seed)
+    elif mode == "Fully Random":
+        result = fully_random(seed=seed)
+    else:
+        result = fully_random(seed=seed)
+
+    display = format_inspiration(result)
+
+    # Build preview prompts
+    lyria_preview = build_lyria_prompt(
+        bpm=result.bpm, key=result.key, chord_progression=result.chord_progression,
+        instruments=result.instruments, mood=result.mood,
+        vocal_style_tags=result.vocal_style_tags, drum_groove=result.drum_groove,
+        language=result.language, genre=result.genre,
+    )
+    suno_preview = build_suno_style_from_fields(
+        bpm=result.bpm, key=result.key, chord_progression=result.chord_progression,
+        instruments=result.instruments, mood=result.mood,
+        vocal_style_tags=result.vocal_style_tags, drum_groove=result.drum_groove,
+        language=result.language, genre=result.genre,
+    )
+
+    return display, f"--- Lyria Prompt ---\n{lyria_preview}\n\n--- Suno Style ---\n{suno_preview}", result
+
+
+def do_apply_inspiration(inspiration_result):
+    """Apply InspirationResult to Music Creator fields."""
+    if inspiration_result is None:
+        return [gr.update()] * 9
+    r = inspiration_result
+
+    # Match mood to dropdown
+    matched_mood = ""
+    if r.mood:
+        for opt in MOOD_OPTIONS:
+            if any(w in r.mood.lower() for w in opt.lower().split(" / ")):
+                matched_mood = opt
+                break
+
+    # Match instruments to checkboxes
+    matched_instruments = []
+    if r.instruments:
+        inst_lower = " ".join(r.instruments).lower()
+        for opt in INSTRUMENT_OPTIONS:
+            opt_low = opt.lower()
+            if any(word in inst_lower for word in opt_low.split(" / ")[0].split()):
+                matched_instruments.append(opt)
+
+    # Match vocal tags to checkboxes
+    matched_vocal = []
+    if r.vocal_style_tags:
+        tags_lower = " ".join(r.vocal_style_tags).lower()
+        for opt in VOCAL_STYLE_OPTIONS:
+            if opt.lower().split("/")[0].strip() in tags_lower or opt.lower() in tags_lower:
+                matched_vocal.append(opt)
+
+    # Match drum groove
+    matched_drum = ""
+    if r.drum_groove:
+        for opt in DRUM_GROOVE_OPTIONS:
+            if any(w in r.drum_groove.lower() for w in opt.lower().split(" / ")):
+                matched_drum = opt
+                break
+
+    return [
+        gr.update(value=r.bpm),
+        gr.update(value=r.key if r.key in KEY_OPTIONS else "C major"),
+        gr.update(value=r.chord_progression),
+        gr.update(value=""),  # lyrics — not generated
+        gr.update(value=matched_mood),
+        gr.update(value=matched_instruments),
+        gr.update(value=matched_vocal),
+        gr.update(value=matched_drum),
+        gr.update(value=r.language),
+    ]
+
+
+# =========================================================================
+# Chart Insights helper functions
+# =========================================================================
+
+def do_score_chart_potential(analysis_result):
+    """Score an analysis result against chart patterns."""
+    if analysis_result is None:
+        return "Please run analysis first. / 请先分析一首音乐。"
+
+    params = {}
+    r = analysis_result
+    if r.rhythm:
+        params["bpm"] = r.rhythm.bpm
+    if r.key:
+        params["key"] = r.key.key
+    if r.chords and r.chords.chord_progression:
+        params["chord_progression"] = r.chords.chord_progression
+    if r.emotion:
+        params["mood"] = r.emotion.overall_mood
+    if r.duration_seconds:
+        params["duration_seconds"] = r.duration_seconds
+
+    result = get_popularity_score(params)
+    return format_chart_score(result)
+
+
+def do_fetch_billboard():
+    """Fetch current Billboard Hot 100."""
+    if not is_billboard_available():
+        return "billboard.py not installed. Run: pip install billboard.py"
+    tracks = fetch_billboard_hot100()
+    if not tracks:
+        return "Failed to fetch Billboard data."
+    if "error" in tracks[0]:
+        return f"Error: {tracks[0]['error']}"
+
+    lines = ["Billboard Hot 100 — Current Chart\n"]
+    for t in tracks[:50]:
+        lines.append(f"  #{t['rank']:3d} | {t['title']} — {t['artist']} (Weeks: {t.get('weeks', '?')})")
+    return "\n".join(lines)
+
+
+def do_get_chart_summary():
+    """Get static chart patterns summary."""
+    p = CHART_PATTERNS
+    lines = [
+        "Chart Hit Patterns (Based on Research)",
+        "=" * 45,
+        "",
+        f"Average BPM: {p['tempo']['mean']:.0f} (sweet spot: {p['tempo']['hit_range'][0]}-{p['tempo']['hit_range'][1]})",
+        f"Most Common Keys: {', '.join(p['key']['most_common'][:5])}",
+        "",
+        "Top Chord Progressions:",
+    ]
+    for prog in p["chord_progressions"][:5]:
+        lines.append(f"  {prog['name']:15s} — {prog['frequency']*100:.0f}% of hits ({', '.join(prog['genres'])})")
+    lines.extend([
+        "",
+        f"Time Signature: 4/4 ({p['time_signature']['4/4']*100:.0f}% of songs)",
+        f"Danceability: {p['danceability']['mean']:.2f} avg (hit range: {p['danceability']['hit_range'][0]}-{p['danceability']['hit_range'][1]})",
+        f"Energy: {p['energy']['mean']:.2f} avg (hit range: {p['energy']['hit_range'][0]}-{p['energy']['hit_range'][1]})",
+        f"Valence: {p['valence']['mean']:.2f} avg (hit range: {p['valence']['hit_range'][0]}-{p['valence']['hit_range'][1]})",
+        f"Ideal Duration: {p['duration_seconds']['hit_range'][0]}-{p['duration_seconds']['hit_range'][1]} seconds",
+    ])
+    return "\n".join(lines)
+
+
+# =========================================================================
 # Build Gradio UI
 # =========================================================================
 
@@ -505,6 +675,131 @@ with gr.Blocks(
             )
 
         # =====================================================================
+        # TAB: Inspiration / 灵感
+        # =====================================================================
+        with gr.TabItem("Inspiration / 灵感"):
+            gr.Markdown(
+                "**随机生成音乐参数，获取创作灵感。** 生成的参数可一键应用到 Music Creator。\n\n"
+                "**Generate random musically-valid parameters for creative inspiration.**"
+            )
+
+            inspiration_state = gr.State(value=None)
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    insp_mode = gr.Radio(
+                        choices=["Fully Random", "Random Genre", "Random Mood", "Hit Formula"],
+                        value="Fully Random",
+                        label="Mode / 模式",
+                    )
+                    insp_genre = gr.Dropdown(
+                        choices=[""] + GENRES,
+                        value="pop",
+                        label="Genre (for Random Genre / Hit Formula)",
+                    )
+                    insp_mood = gr.Dropdown(
+                        choices=[""] + MOOD_OPTIONS,
+                        value="",
+                        label="Mood (for Random Mood)",
+                    )
+                    insp_variation = gr.Slider(
+                        minimum=0, maximum=100, value=30, step=5,
+                        label="Variation % (for Mutate)",
+                        visible=False,
+                    )
+                    insp_seed = gr.Textbox(
+                        label="Seed (optional, for reproducibility)",
+                        placeholder="Leave empty for random",
+                    )
+                    with gr.Row():
+                        insp_generate_btn = gr.Button("Generate Inspiration / 生成灵感", variant="primary")
+                        insp_apply_btn = gr.Button("Apply to Creator / 应用到创作", variant="secondary")
+
+                with gr.Column(scale=1):
+                    insp_output = gr.Textbox(
+                        label="Generated Parameters / 生成的参数",
+                        lines=15, interactive=False,
+                        elem_classes=["mono"],
+                    )
+                    insp_prompt_preview = gr.Textbox(
+                        label="Prompt Preview / 提示词预览",
+                        lines=12, interactive=False, show_copy_button=True,
+                        elem_classes=["prompt-box"],
+                    )
+
+            # Wire inspiration generation
+            insp_generate_btn.click(
+                fn=do_generate_inspiration,
+                inputs=[insp_mode, insp_genre, insp_mood, insp_variation, insp_seed],
+                outputs=[insp_output, insp_prompt_preview, inspiration_state],
+            )
+
+            # Wire apply to creator
+            insp_apply_btn.click(
+                fn=do_apply_inspiration,
+                inputs=[inspiration_state],
+                outputs=[
+                    bpm_slider, key_dropdown, chord_input, lyrics_input,
+                    mood_dropdown, instruments_checkbox, vocal_checkbox,
+                    drum_dropdown, language_dropdown,
+                ],
+            )
+
+        # =====================================================================
+        # TAB: Chart Insights / 排行榜分析
+        # =====================================================================
+        with gr.TabItem("Chart Insights / 排行榜分析"):
+            gr.Markdown(
+                "**了解热门歌曲的共同特征，评估你的音乐的排行榜潜力。**\n\n"
+                "**Understand what makes songs chart — score your music's hit potential.**"
+            )
+
+            with gr.Row():
+                with gr.Column(scale=1):
+                    gr.Markdown("### Your Song's Chart Potential / 排行榜潜力")
+                    chart_score_btn = gr.Button("Score My Song / 评估我的音乐", variant="primary")
+                    chart_score_output = gr.Textbox(
+                        label="Chart Score / 排行榜评分",
+                        lines=18, interactive=False,
+                        elem_classes=["mono"],
+                    )
+
+                with gr.Column(scale=1):
+                    gr.Markdown("### Chart Patterns / 排行榜规律")
+                    chart_patterns_btn = gr.Button("Show Chart Patterns / 显示排行榜规律", variant="secondary")
+                    chart_patterns_output = gr.Textbox(
+                        label="Chart Patterns / 排行榜数据",
+                        lines=18, interactive=False,
+                        elem_classes=["mono"],
+                    )
+
+            with gr.Accordion("Live Billboard Data / 实时排行榜 (Optional)", open=False):
+                gr.Markdown("Requires `billboard.py`: `pip install billboard.py`")
+                billboard_btn = gr.Button("Fetch Billboard Hot 100 / 获取 Billboard 榜单")
+                billboard_output = gr.Textbox(
+                    label="Billboard Hot 100",
+                    lines=25, interactive=False,
+                    elem_classes=["mono"],
+                )
+
+            # Wire chart buttons
+            chart_score_btn.click(
+                fn=do_score_chart_potential,
+                inputs=[analysis_state],
+                outputs=[chart_score_output],
+            )
+            chart_patterns_btn.click(
+                fn=do_get_chart_summary,
+                inputs=[],
+                outputs=[chart_patterns_output],
+            )
+            billboard_btn.click(
+                fn=do_fetch_billboard,
+                inputs=[],
+                outputs=[billboard_output],
+            )
+
+        # =====================================================================
         # Analysis Result Tabs
         # =====================================================================
         with gr.TabItem("Overview / 总览"):
@@ -585,7 +880,11 @@ with gr.Blocks(
 
     **Music Creator**: Edit parameters → Generate with Lyria / Export to Suno / Udio
 
-    **REST API**: Run `uvicorn api:app` for programmatic access at `/api/health`, `/api/analyze`, `/api/generate`
+    **Inspiration**: Generate random musically-valid parameters → Apply to Creator → Generate
+
+    **Chart Insights**: Score your music's chart potential → Get improvement suggestions
+
+    **REST API**: Run `uvicorn api:app` for programmatic access at `/api/health`, `/api/analyze`, `/api/generate`, `/api/inspire`, `/api/charts/*`
     """)
 
 if __name__ == "__main__":

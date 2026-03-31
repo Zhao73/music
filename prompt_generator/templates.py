@@ -8,14 +8,33 @@
 # ============================================================
 
 # Goes into Suno's "スタイル / Style" text box
+# Strategy: genre + mood first (highest impact), then vocal, then technical
 SUNO_STYLE_TEMPLATE = """\
-{genre}, {key}, {bpm} BPM, {time_signature}, {feel}, {energy}, {mood}, {instruments}, vocal {vocal_range}, {vocal_style_tags}, {dynamics_marking}, chords: {chord_progression}, {drum_groove}, {language}\
+{genre}, {mood}, {energy}, {vocal_engineering}, {bpm} BPM in {key}, {time_signature}, {instruments}, {dynamics_arc}, chords: {chord_progression}, {drum_groove}, {language}\
 """
 
 # Goes into Suno's "歌詞 / Lyrics" text box
 # Suno recognizes [Verse], [Chorus], [Bridge], [Intro], [Outro] markers
 SUNO_LYRICS_TEMPLATE = """\
 {structured_lyrics}\
+"""
+
+# ============================================================
+# LYRIA — flowing narrative format, ~500 word max
+# ============================================================
+LYRIA_TEMPLATE = """\
+An {mood_adjective} {genre} track in {key} at {bpm} BPM. {mood_sentence}
+
+{section_narrative}
+
+Instruments: {instruments}. {chord_sentence}
+
+Vocal delivery: {vocal_engineering}. {dynamics_arc_sentence}
+
+{drum_sentence}
+
+{language_sentence}
+{lyrics_block}\
 """
 
 # ============================================================
@@ -61,6 +80,7 @@ GENERIC_TEMPLATE = """\
 
 ## 6. Vocal Style & Technique
 - Style Tags: [{vocal_style_tags}]
+- Vocal Engineering: {vocal_engineering}
 - Vibrato: {vibrato}
 - Register: {register}
 - Tone: {tone}
@@ -69,15 +89,19 @@ GENERIC_TEMPLATE = """\
 ## 7. Dynamics & Volume
 - Overall: {dynamics_marking}
 - Dynamic Range: {dynamic_range}
+- Dynamics Arc: {dynamics_arc}
 {volume_map}
 
 ## 8. Instruments
 - {instruments}
 
-## 9. Song Structure
+## 9. Texture Evolution
+- {texture_evolution}
+
+## 10. Song Structure
 {structure_detail}
 
-## 10. Lyrics ({language})
+## 11. Lyrics ({language})
 {structured_lyrics}
 
 ## Reproduction Notes
@@ -90,9 +114,9 @@ UDIO_TEMPLATE = """\
 {feel}, {energy}. Mood: {mood}.
 Chords: {chord_progression}
 Instruments: {instruments}.
-Vocal: {vocal_range}, {vocal_style_tags}.
+Vocal: {vocal_range}, {vocal_engineering}.
 {vibrato}. {tone}. {articulation}.
-Dynamics: {dynamics_marking}, {dynamic_range} dynamic range.
+Dynamics: {dynamics_marking}, {dynamic_range} dynamic range. {dynamics_arc}.
 Drums: {drum_groove}. Pattern: {drum_notation}
 {melody_description}
 {emotional_arc}
