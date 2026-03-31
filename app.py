@@ -20,6 +20,7 @@ from music_generation.lyria_client import is_available as lyria_available, gener
 from music_generation.prompt_builder import (
     build_lyria_prompt,
     build_suno_style_from_fields,
+    build_suno_lyrics_from_fields,
     build_udio_prompt_from_fields,
 )
 from inspiration.generator import (
@@ -269,14 +270,19 @@ def do_generate_lyria(api_key, bpm, key, chord_prog, lyrics, mood, instruments,
 
 def do_copy_suno(bpm, key, chord_prog, lyrics, mood, instruments,
                  vocal_tags, drum_groove, language, genre):
-    """Build Suno style + lyrics for copy-paste."""
+    """Build Suno v5.5 style + lyrics with metatags for copy-paste."""
     style = build_suno_style_from_fields(
         bpm=bpm, key=key, chord_progression=chord_prog,
         instruments=instruments or None, mood=mood,
         vocal_style_tags=vocal_tags or None, drum_groove=drum_groove,
         language=language, genre=genre,
     )
-    lyrics_out = lyrics.strip() if lyrics else ""
+    # v5.5: Auto-add section structure + energy tags to lyrics
+    lyrics_out = build_suno_lyrics_from_fields(
+        lyrics=lyrics,
+        mood=mood,
+        vocal_style_tags=vocal_tags,
+    )
     return style, lyrics_out
 
 

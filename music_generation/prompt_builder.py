@@ -1,10 +1,19 @@
 """Build rich, strategic prompts for AI music generation tools.
 
 Lyria: flowing descriptive text, ~500 word max, narrative style.
-Suno: Style field (~200 chars) + Lyrics field (with [Section] tags).
+Suno v5.5: Style field (~200 chars) + Lyrics field with [Section] metatags + energy/vocal cues.
 Udio: structured blocks, concise but detailed.
 
 Uses hit_formulas knowledge base for enhanced quality when available.
+
+Suno v5.5 key features:
+- Negative prompting: "no autotune, no heavy reverb" at END of style
+- Energy tags: [Energy: High], [Energy: Low] before sections
+- Vocal Style tags: [Vocal Style: Whisper], [Vocal Style: Raspy] etc.
+- Structure tags: [Verse], [Chorus], [Pre-Chorus], [Bridge], [Intro], [Outro], [Instrumental], [Break]
+- Voices: clone your own voice (Pro/Premier only)
+- Custom Models: train on your music catalog
+- My Taste: auto-learns your preferences
 """
 
 from music_knowledge.hit_formulas import (
@@ -112,23 +121,27 @@ def build_suno_style_from_fields(
     drum_groove: str = "",
     language: str = "English",
     genre: str = "",
+    negative_tags: list[str] = None,
 ) -> str:
-    """Build an optimized Suno Style string (~200 chars max).
+    """Build an optimized Suno v5.5 Style string.
 
-    Strategy: lead with genre + mood (highest impact for Suno),
-    then vocal engineering terms, then technical details.
+    v5.5 Best practices:
+    - Genre + mood FIRST (highest impact, Suno weights early tokens more)
+    - 1-2 genre tags, 2-3 instrument tags, 1-2 mood/energy tags
+    - Vocal engineering terms Suno responds to
+    - Negative prompts at END: "no autotune, no heavy reverb"
+    - Comma-separated format (Suno parses better than paragraphs)
     """
     parts = []
 
-    # Genre + mood first (most impactful)
+    # Genre + mood first (most impactful for Suno)
     if genre:
         parts.append(genre)
     if mood:
         parts.append(mood)
 
-    # Vocal engineering — Suno responds well to specific vocal descriptors
+    # Vocal engineering — Suno v5.5 responds well to specific vocal descriptors
     if vocal_style_tags:
-        # Use compact but evocative terms
         vocal_compact = _compact_vocal_for_suno(vocal_style_tags)
         if vocal_compact:
             parts.append(vocal_compact)
@@ -136,7 +149,7 @@ def build_suno_style_from_fields(
     # Key + BPM
     parts.append(f"{key}, {bpm:.0f} BPM")
 
-    # Instruments (compact)
+    # Instruments (limit to 3-4 — Suno struggles with more)
     if instruments:
         parts.append(", ".join(instruments[:4]))
 
@@ -154,12 +167,81 @@ def build_suno_style_from_fields(
     if language and language.lower() != "english":
         parts.append(language)
 
-    # Build and trim to ~200 chars
+    # v5.5: Negative prompts at the END (Suno processes positives first)
+    if negative_tags:
+        neg_str = ", ".join(f"no {t}" for t in negative_tags)
+        parts.append(neg_str)
+
     result = ", ".join(parts)
-    if len(result) > 220:
-        # Trim least important parts (keep genre, mood, vocal, key/bpm)
-        result = ", ".join(parts[:5])
     return result
+
+
+def build_suno_lyrics_from_fields(
+    lyrics: str = "",
+    sections: list = None,
+    mood: str = "",
+    vocal_style_tags: list[str] = None,
+    energy_level: str = "",
+) -> str:
+    """Build Suno v5.5 Lyrics field with metatags.
+
+    v5.5 supports:
+    - Structure tags: [Verse], [Chorus], [Pre-Chorus], [Bridge], [Intro], [Outro]
+    - Energy tags: [Energy: High], [Energy: Low]
+    - Vocal delivery: [Vocal Style: Whisper], [Vocal Style: Raspy], etc.
+    - Instrument cues: [Instrumental], [Guitar Solo], [Piano]
+    - Tags must be on their own line, ABOVE the lyrics for that section
+    """
+    if not lyrics or not lyrics.strip():
+        return ""
+
+    # If lyrics already have [Section] tags, return as-is
+    if "[" in lyrics and "]" in lyrics:
+        return lyrics.strip()
+
+    # Auto-structure: wrap plain lyrics with basic tags
+    lines = [l.strip() for l in lyrics.strip().split("\n") if l.strip()]
+    if not lines:
+        return ""
+
+    # Simple auto-structuring: split into verse/chorus chunks
+    result = []
+    chunk_size = 4
+    section_cycle = ["Verse", "Chorus", "Verse", "Chorus", "Bridge", "Chorus"]
+    section_idx = 0
+
+    # Add energy cue for first section based on mood
+    energy_map = {
+        "happy / energetic": "High",
+        "excited / uplifting": "High",
+        "powerful / dramatic": "High",
+        "angry / intense": "High",
+        "calm / ambient": "Low",
+        "peaceful / content": "Low",
+        "sad / melancholic": "Low",
+        "somber / reflective": "Low",
+    }
+
+    for i in range(0, len(lines), chunk_size):
+        chunk = lines[i:i + chunk_size]
+        if not chunk:
+            break
+
+        section_name = section_cycle[section_idx % len(section_cycle)]
+        result.append(f"[{section_name}]")
+
+        # v5.5: Add energy cue for chorus sections
+        if section_name == "Chorus":
+            result.append("[Energy: High]")
+        elif section_name == "Bridge":
+            result.append("[Energy: Low]")
+
+        for line in chunk:
+            result.append(line)
+        result.append("")
+        section_idx += 1
+
+    return "\n".join(result)
 
 
 def build_udio_prompt_from_fields(
