@@ -43,7 +43,8 @@ def detect_structure(
     )
 
     # Find segment boundaries using structural features
-    bound_frames = librosa.segment.agglomerative(features, k=None)
+    n_segments = min(10, features.shape[1] // 50) or 6
+    bound_frames = librosa.segment.agglomerative(features, k=n_segments)
 
     # Convert frames to times
     bound_times = librosa.frames_to_time(bound_frames, sr=sr)

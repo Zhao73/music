@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from prompt_generator.templates import (
     SUNO_STYLE_TEMPLATE, SUNO_LYRICS_TEMPLATE,
-    GENERIC_TEMPLATE, UDIO_TEMPLATE,
+    GENERIC_TEMPLATE, UDIO_TEMPLATE, LYRIA_PROMPT_TEMPLATE,
 )
 from config import LANGUAGE_OPTIONS
 from music_knowledge.hit_formulas import (
@@ -19,6 +19,8 @@ class PromptResult:
     suno_style: str             # → paste into Suno "スタイル / Style" box
     suno_lyrics: str            # → paste into Suno "歌詞 / Lyrics" box
     suno_lyrics_translated: str # → translated lyrics for Suno
+    # Lyria prompt
+    lyria_prompt: str           # → for Google Lyria generation
     # Other formats
     udio_prompt: str
     generic_prompt: str
@@ -56,20 +58,52 @@ def _guess_genre(instruments: list[str], bpm: float, energy: str, feel: str, moo
     return "Pop"
 
 
-def _build_structured_lyrics(lyrics_text: str, sections: list, lyrics_segments: list = None) -> str:
+def _build_structured_lyrics(
+    lyrics_text: str,
+    sections: list,
+    lyrics_segments: list = None,
+    chord_per_section: dict = None,
+    dynamic_events: list = None,
+) -> str:
+    """Build lyrics with section markers and musical annotations.
+
+    Uses overlap-based matching instead of midpoint for better accuracy.
+    """
     if not sections or not lyrics_text:
         return lyrics_text or ""
 
     result = []
     for section in sections:
-        result.append(f"[{section.label}] ({section.start_time:.1f}s - {section.end_time:.1f}s)")
+        # Build annotated section header
+        header = f"[{section.label}]"
+
+        # Add chord annotation if available
+        if chord_per_section:
+            for label_key, prog in chord_per_section.items():
+                if label_key.lower().replace(" ", "") in section.label.lower().replace(" ", "") or \
+                   section.label.lower().replace(" ", "") in label_key.lower().replace(" ", ""):
+                    header = f"[{section.label}] (chords: {prog})"
+                    break
+
+        result.append(header)
 
         if lyrics_segments:
             section_lyrics = []
             for seg in lyrics_segments:
-                seg_mid = (seg["start"] + seg["end"]) / 2
-                if section.start_time <= seg_mid <= section.end_time:
+                # Overlap-based matching: segment belongs to section if >50% overlap
+                seg_start = seg["start"]
+                seg_end = seg["end"]
+                seg_dur = seg_end - seg_start
+                if seg_dur <= 0:
+                    continue
+
+                overlap_start = max(seg_start, section.start_time)
+                overlap_end = min(seg_end, section.end_time)
+                overlap = max(0, overlap_end - overlap_start)
+
+                if overlap > seg_dur * 0.5:
                     section_lyrics.append(seg["text"])
+
             if section_lyrics:
                 for line in section_lyrics:
                     if line.strip():
@@ -78,6 +112,7 @@ def _build_structured_lyrics(lyrics_text: str, sections: list, lyrics_segments: 
                 result.append("(instrumental)")
         result.append("")
 
+    # Fallback: if no segments matched, distribute plain text
     text_in_result = [l for l in result if l.strip() and not l.startswith("[") and l != "(instrumental)"]
     if not text_in_result and lyrics_text.strip():
         lines = [l.strip() for l in lyrics_text.strip().split("\n") if l.strip()]
@@ -127,6 +162,24 @@ def _format_dynamic_events(dynamic_events: list) -> str:
     return " → ".join(parts)
 
 
+def _describe_drum_hits(pattern: str, name: str) -> str:
+    """Describe where drum hits land in musical terms."""
+    if not pattern:
+        return f"{name} on standard beats"
+    hits = [i + 1 for i, c in enumerate(pattern.replace("|", "")) if c in "Xx"]
+    if not hits:
+        return f"no {name}"
+    beat_positions = []
+    for h in hits[:8]:
+        beat = (h - 1) // 4 + 1
+        sub = (h - 1) % 4 + 1
+        if sub == 1:
+            beat_positions.append(f"beat {beat}")
+        else:
+            beat_positions.append(f"beat {beat}.{sub}")
+    return f"{name} on {', '.join(beat_positions)}"
+
+
 def generate_prompt(
     lyrics_text: str,
     translated_text: str,
@@ -161,11 +214,11 @@ def generate_prompt(
     dynamic_events: list = None,
     rhythm_description: str = "",
     lyrics_segments: list = None,
-    # Chords (NEW)
+    # Chords
     chord_progression: str = "",
     chord_per_section: dict = None,
     chord_description: str = "",
-    # Drums (NEW)
+    # Drums
     drum_pattern: str = "",
     drum_groove: str = "",
     drum_description: str = "",
@@ -181,7 +234,11 @@ def generate_prompt(
     vocal_tags_str = ", ".join(vocal_style_tags) if vocal_style_tags else "natural"
     mood_tags_str = ", ".join(mood_tags) if mood_tags else mood
     dynamic_events_str = _format_dynamic_events(dynamic_events) if dynamic_events else "gradual"
-    structured_lyrics = _build_structured_lyrics(lyrics_text, sections, lyrics_segments)
+    structured_lyrics = _build_structured_lyrics(
+        lyrics_text, sections, lyrics_segments,
+        chord_per_section=chord_per_section,
+        dynamic_events=dynamic_events,
+    )
     structure_detail = _build_structure_detail(sections)
     chord_section_str = _format_chord_per_section(chord_per_section or {})
 
@@ -194,6 +251,10 @@ def generate_prompt(
 
     # Texture evolution — how instrumentation layers change
     texture_evolution = _build_texture_evolution(sections, instruments)
+
+    # Drum hit descriptions for Lyria template
+    kick_desc = _describe_drum_hits(kick_pattern, "kick")
+    snare_desc = _describe_drum_hits(snare_pattern, "snare")
 
     # Common template kwargs
     common = dict(
@@ -212,10 +273,10 @@ def generate_prompt(
         vocal_range=vocal_range,
         vocal_style_tags=vocal_tags_str,
         vocal_engineering=vocal_engineering,
-        vibrato=vibrato_desc or "natural",
-        register=register_desc or "",
-        tone=tone_desc or "",
-        articulation=articulation_desc or "",
+        vibrato=vibrato_desc or "natural vibrato",
+        register=register_desc or "mixed register",
+        tone=tone_desc or "natural tone",
+        articulation=articulation_desc or "legato",
         dynamics_marking=dynamics_marking or "mf",
         dynamic_range=dynamic_range or "moderate",
         dynamics_arc=dynamics_arc,
@@ -229,9 +290,11 @@ def generate_prompt(
         chord_per_section=chord_section_str,
         drum_groove=drum_groove or "standard",
         drum_notation=drum_notation or "",
-        kick_pattern=kick_pattern or "",
-        snare_pattern=snare_pattern or "",
-        hihat_pattern=hihat_pattern or "",
+        kick_pattern=kick_pattern or "X...|....|X.X.|....",
+        snare_pattern=snare_pattern or "....|X...|....|X...",
+        hihat_pattern=hihat_pattern or "X.X.|X.X.|X.X.|X.X.",
+        kick_description=kick_desc,
+        snare_description=snare_desc,
     )
 
     # ==========================================================
@@ -254,6 +317,13 @@ def generate_prompt(
         suno_lyrics_translated = SUNO_LYRICS_TEMPLATE.format(
             structured_lyrics=translated_structured,
         )
+
+    # --- Lyria prompt ---
+    lyria_prompt = LYRIA_PROMPT_TEMPLATE.format(
+        **common,
+        language=lang_name,
+        structured_lyrics=structured_lyrics,
+    )
 
     # --- Udio prompt ---
     udio = UDIO_TEMPLATE.format(
@@ -300,6 +370,7 @@ def generate_prompt(
         suno_style=suno_style,
         suno_lyrics=suno_lyrics,
         suno_lyrics_translated=suno_lyrics_translated,
+        lyria_prompt=lyria_prompt,
         udio_prompt=udio,
         generic_prompt=generic,
         translated_prompt=translated_prompt,

@@ -37,7 +37,7 @@ from chart_data.analyzer import format_chart_score
 from chart_data.fetcher import is_billboard_available, fetch_billboard_hot100
 
 
-def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
+def run_analysis(audio_file, source_lang, target_lang, translation_mode, api_key, progress=gr.Progress()):
     if audio_file is None:
         empty = "Please upload an audio file. / 请上传音乐文件。"
         return (empty,) + ("",) * 15 + ("", None, None, None) + (None,)
@@ -45,12 +45,16 @@ def run_analysis(audio_file, source_lang, target_lang, progress=gr.Progress()):
     def progress_callback(step, fraction):
         progress(fraction, desc=step)
 
+    mode = "intelligent" if translation_mode == "Intelligent (LLM)" else "simple"
+
     try:
         result = analyze(
             audio_path=audio_file,
             source_language=source_lang if source_lang != "auto" else None,
             target_language=target_lang if target_lang else None,
             progress_callback=progress_callback,
+            translation_mode=mode,
+            llm_api_key=api_key or "",
         )
     except Exception as e:
         import traceback
@@ -482,6 +486,18 @@ with gr.Blocks(
         with gr.Column(scale=1):
             source_lang = gr.Dropdown(choices=lang_choices, value="auto", label="Song Language / 歌曲语言")
             target_lang = gr.Dropdown(choices=target_choices, value="en", label="Target Language / 目标语言")
+            with gr.Accordion("Translation Settings / 翻译设置", open=False):
+                translation_mode = gr.Radio(
+                    choices=["Simple (Google)", "Intelligent (LLM)"],
+                    value="Simple (Google)",
+                    label="Translation Mode / 翻译模式",
+                    info="Intelligent 模式用 Gemini LLM 智能翻译，保留音节、押韵、情感",
+                )
+                gemini_api_key = gr.Textbox(
+                    label="Gemini API Key",
+                    type="password",
+                    placeholder="Intelligent 模式需要 API Key (aistudio.google.com 免费获取)",
+                )
             btn = gr.Button("Analyze / 开始分析", variant="primary", size="lg")
 
     with gr.Tabs():
@@ -503,7 +519,7 @@ with gr.Blocks(
                     gr.HTML("<h3>Step 1: Style → 粘贴到 Suno「スタイル」框</h3>")
                     out_suno_style = gr.Textbox(
                         label="Suno Style (copy this → paste into Suno Style box)",
-                        lines=5, interactive=False, show_copy_button=True,
+                        lines=18, interactive=False, show_copy_button=True,
                         elem_classes=["mono"],
                     )
                 with gr.Column():
@@ -540,7 +556,7 @@ with gr.Blocks(
                     api_key_input = gr.Textbox(
                         label="Gemini API Key (for Lyria generation)",
                         type="password",
-                        placeholder="Enter your API key...",
+                        placeholder="Same key as Translation Settings / 与翻译设置共用",
                     )
                     genre_input = gr.Textbox(
                         label="Genre / 流派",
@@ -855,7 +871,7 @@ with gr.Blocks(
     # Wire analysis button — outputs include score files + analysis_state
     btn.click(
         fn=run_analysis,
-        inputs=[audio_input, source_lang, target_lang],
+        inputs=[audio_input, source_lang, target_lang, translation_mode, gemini_api_key],
         outputs=[
             out_info, out_lyrics, out_melody, out_chords, out_drums, out_structure,
             out_vocal, out_emotion, out_dynamics, out_instruments,
@@ -888,4 +904,4 @@ with gr.Blocks(
     """)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, show_api=False)

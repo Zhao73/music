@@ -45,8 +45,12 @@ def separate_tracks(audio_path: str, sr: int = 22050) -> SeparationResult:
         return _fallback_separation(audio_path, sr)
 
     try:
-        # Load audio
-        waveform, orig_sr = torchaudio.load(audio_path)
+        # Load audio using librosa first, then convert to tensor
+        import librosa as _librosa
+        _y_raw, orig_sr = _librosa.load(audio_path, sr=None, mono=False)
+        if _y_raw.ndim == 1:
+            _y_raw = np.stack([_y_raw, _y_raw])
+        waveform = torch.from_numpy(_y_raw)
 
         # Demucs expects specific sample rate (44100 for htdemucs)
         model = get_model("htdemucs")
